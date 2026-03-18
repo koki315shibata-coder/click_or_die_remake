@@ -441,9 +441,18 @@ function triggerCenterAlert(text) {
   setTimeout(() => el.remove(), 2000);
 }
 
-function startGame() {
+function clearAllTimers() {
+  if (waitTimeout) clearTimeout(waitTimeout);
+  if (fireTimeout) clearTimeout(fireTimeout);
+  if (holdTimeout) clearTimeout(holdTimeout);
+  if (doubleTimeout) clearTimeout(doubleTimeout);
   if (autoNextTimeout) clearTimeout(autoNextTimeout);
   if (beepInterval) clearInterval(beepInterval);
+  waitTimeout = fireTimeout = holdTimeout = doubleTimeout = autoNextTimeout = beepInterval = null;
+}
+
+function startGame() {
+  clearAllTimers();
   resetUI();
 
   holdActive = false;
@@ -565,14 +574,19 @@ function successGame() {
   }, 1200);
 }
 
-function failGame(reason) {
-  clearTimeout(waitTimeout);
-  clearTimeout(fireTimeout);
-  clearTimeout(holdTimeout);
-  clearTimeout(doubleTimeout);
-  if (beepInterval) clearInterval(beepInterval);
+function resetGameState() {
+  clearAllTimers();
   holdActive = false; doublePending = false;
   UI.holdProgress.style.width = '0'; UI.holdProgress.style.height = '0';
+  streak = 0;
+  speedModRounds = 0;
+  speedModifier = 1.0;
+  const activeBtn = Array.from(UI.diffBtns).find(b => b.classList.contains('active'));
+  currentLevelIdx = activeBtn ? parseInt(activeBtn.dataset.level) - 1 : 0;
+}
+
+function failGame(reason) {
+  resetGameState();
 
   UI.diffContainer.style.opacity = '1';
   UI.diffContainer.style.pointerEvents = 'auto';
@@ -595,19 +609,13 @@ function failGame(reason) {
 
   UI.resultDisplay.classList.remove('hidden');
 
-  streak = 0;
-  speedModRounds = 0;
-  speedModifier = 1.0;
-  const activeBtn = Array.from(UI.diffBtns).find(b => b.classList.contains('active'));
-  currentLevelIdx = activeBtn ? parseInt(activeBtn.dataset.level) - 1 : 0;
-
   updateFirebaseState(false);
   updateSelectorUI();
   updateSidebar();
 
   UI.mainBtn.style.opacity = '1';
   UI.mainBtn.style.pointerEvents = 'auto';
-  UI.mainBtn.innerText = isOnline ? 'wait for next' : 'try again';
+  UI.mainBtn.innerText = isOnline ? 'wait for next' : 'REMATCH';
 
   // In online mode, we just stay dead and watch opponent's streak update, or leave room
 }
@@ -691,7 +699,11 @@ function enterGameMode(online) {
 
 // --- INPUT EVENT LOGIC ---
 
-function handleInputDown() {
+function handleInputDown(e) {
+  if (e) {
+    if (e.cancelable) e.preventDefault();
+    e.stopImmediatePropagation();
+  }
   initAudio();
   if (state === 'START' || state === 'RESULT') {
     if (!isOnline) startGame();
@@ -739,13 +751,13 @@ function handleInputUp() {
 // --- LISTENERS END SETUP ---
 
 UI.clickLayer.addEventListener('mousedown', handleInputDown);
-UI.clickLayer.addEventListener('touchstart', (e) => { e.preventDefault(); handleInputDown(); }, { passive: false });
+UI.clickLayer.addEventListener('touchstart', handleInputDown, { passive: false });
 
 document.addEventListener('mouseup', handleInputUp);
 document.addEventListener('touchend', handleInputUp);
 
-UI.mainBtn.addEventListener('mousedown', (e) => { e.stopPropagation(); handleInputDown(); });
-UI.mainBtn.addEventListener('touchstart', (e) => { e.stopPropagation(); e.preventDefault(); handleInputDown(); });
+UI.mainBtn.addEventListener('mousedown', handleInputDown);
+UI.mainBtn.addEventListener('touchstart', handleInputDown, { passive: false });
 
 UI.diffBtns.forEach(btn => {
   const handler = (e) => {
@@ -767,8 +779,8 @@ UI.diffBtns.forEach(btn => {
 });
 
 // Menu Listeners
-Lobby.btnOffline.addEventListener('click', () => enterGameMode(false));
-Lobby.btnOnline.addEventListener('click', () => showScreen('screen-lobby'));
+Lobby.btnOffline.addEventListener('click', (e) => { initAudio(); enterGameMode(false); });
+Lobby.btnOnline.addEventListener('click', (e) => { initAudio(); showScreen('screen-lobby'); });
 
 Lobby.btnCreate.addEventListener('click', createRoom);
 Lobby.btnJoin.addEventListener('click', () => {
