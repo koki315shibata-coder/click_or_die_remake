@@ -118,43 +118,16 @@ main {
   cursor: crosshair;
 }
 
-#target-outer {
+#main-target {
   position: absolute;
   width: 100%; height: 100%;
   border-radius: 50%;
   border: 6px solid var(--red);
-  box-shadow: 0 0 25px rgba(255, 60, 60, 0.8), inset 0 0 10px rgba(255, 60, 60, 0.3);
+  background-color: transparent;
+  box-shadow: 0 0 25px rgba(239, 69, 101, 0.8), inset 0 0 10px rgba(239, 69, 101, 0.3);
   box-sizing: border-box;
   animation: pulse-ring var(--pulse-dur) infinite linear;
-  transition: transform 0.1s ease;
-}
-
-#target-inner {
-  position: absolute;
-  width: 24px; height: 24px;
-  border-radius: 50%;
-  background: var(--red);
-  top: 50%; left: 50%;
-  transform: translate(-50%, -50%);
-  box-shadow: 0 0 15px rgba(255, 60, 60, 0.8);
-  animation: pulse-core 0.5s infinite alternate ease-in-out;
-}
-
-@keyframes pulse-core {
-  0% { transform: translate(-50%, -50%) scale(1); opacity: 0.8; }
-  100% { transform: translate(-50%, -50%) scale(1.3); opacity: 1; }
-}
-
-.target-ring.outer {
-  width: 100%;
-  height: 100%;
-  border: 2px solid var(--text-muted);
-}
-
-.target-ring.center-dot {
-  width: 8px;
-  height: 8px;
-  background-color: var(--text-muted);
+  transition: all 0.1s ease;
 }
 
 #target-status-text {
@@ -168,80 +141,60 @@ main {
 }
 
 /* GAME STATES */
-.state-wait #target-wrapper {
-  animation: waitShrink 3s linear forwards;
-}
 
 /* --- INACTIVE / WAIT STATE (Dim Red) --- */
-.state-wait #target-outer {
+.state-wait #main-target {
   border-color: rgba(239, 69, 101, 0.3) !important;
-  box-shadow: none !important;
-  animation: none !important;
-}
-.state-wait #target-inner {
-  background: rgba(239, 69, 101, 0.3) !important;
+  background-color: transparent !important;
   box-shadow: none !important;
   animation: none !important;
 }
 .state-wait #target-status-text { color: var(--red); opacity: 0; }
 
 /* --- ACTIVE / CLICKABLE STATES (Massive Solid Green Glows) --- */
-.state-fire #target-outer { 
+.state-fire #main-target { 
   background-color: var(--green) !important; 
   border-color: var(--green) !important; 
   box-shadow: 0 0 60px rgba(44, 182, 125, 0.9), inset 0 0 40px rgba(44, 182, 125, 0.7) !important; 
   animation: pulseGreen 0.2s infinite alternate cubic-bezier(0.4, 0, 0.6, 1) !important;
+  transform: scale(1.1);
 }
-.state-fire #target-inner { display: none !important; }
 .state-fire #target-status-text { color: var(--bg); font-weight: 900; z-index: 200; position: absolute; text-align: center; }
 
 /* command: hold */
-.state-hold #target-outer { 
+.state-hold #main-target { 
   background-color: rgba(44, 182, 125, 0.6) !important; 
   border: 10px dashed var(--green) !important; 
   box-shadow: 0 0 60px rgba(44, 182, 125, 0.9) !important; 
   animation: pulseGreen 0.2s infinite alternate !important;
 }
-.state-hold #target-inner { background: var(--green) !important; box-shadow: 0 0 20px rgba(44, 182, 125, 0.8) !important; }
 .state-hold #target-status-text { color: var(--bg); font-weight: 900; z-index: 200; position: absolute; text-align: center; }
 
 /* command: double */
-.state-double #target-outer { 
+.state-double #main-target { 
   background-color: rgba(44, 182, 125, 0.8) !important; 
   border: 14px double var(--green) !important; 
   box-shadow: 0 0 60px rgba(44, 182, 125, 0.9) !important; 
 }
-.state-double #target-inner { background: var(--bg) !important; box-shadow: 0 0 20px rgba(44, 182, 125, 0.8) !important; }
 .state-double #target-status-text { color: var(--bg); font-weight: 900; z-index: 200; position: absolute; text-align: center; }
 
 /* command: ignore - Stay Dim Red! */
-.state-ignore #target-outer { border-color: rgba(239, 69, 101, 0.3) !important; box-shadow: none !important; animation: none !important;}
-.state-ignore #target-inner { background: rgba(239, 69, 101, 0.3) !important; box-shadow: none !important; animation: none !important;}
+.state-ignore #main-target { 
+  border-color: rgba(239, 69, 101, 0.3) !important; 
+  background-color: transparent !important;
+  box-shadow: none !important; 
+  animation: none !important;
+}
 .state-ignore #target-status-text { color: var(--red); opacity: 0; }
 
-/* hold progress visual */
-.hold-progress {
-  position: absolute;
-  top: 50%; left: 50%;
-  transform: translate(-50%, -50%);
-  width: 0; height: 0;
-  background: rgba(44, 182, 125, 0.4);
-  border-radius: 50%;
-  transition: width 0.05s, height 0.05s;
-  pointer-events: none;
-}
-
-.state-success #target {
+.state-success #main-target {
   animation: targetExpandFade 0.4s forwards cubic-bezier(0.1, 0.9, 0.2, 1);
 }
-.state-success .target-ring.outer { border-color: var(--text-main); }
-.state-success .target-ring.center-dot { background-color: var(--text-main); }
 .state-success #target-status-text { color: var(--text-muted); }
 
-@keyframes waitShrink { 0% { transform: scale(1); } 100% { transform: scale(0.3); } }
 @keyframes pulseRed { 0% { transform: translate(-50%, -50%) scale(1); opacity: 0.8; } 100% { transform: translate(-50%, -50%) scale(1.05); opacity: 1; } }
-@keyframes pulseGreen { 0% { opacity: 0.8; } 100% { opacity: 1; } }
-@keyframes targetExpandFade { 0% { transform: scale(0.6); opacity: 1; border-width: 4px; } 100% { transform: scale(3); opacity: 0; border-width: 0px; } }
+@keyframes pulseGreen { 0% { opacity: 0.8; transform: scale(1.1); } 100% { opacity: 1; transform: scale(1.15); } }
+@keyframes targetExpandFade { 0% { transform: scale(1.1); opacity: 1; border-width: 10px; } 100% { transform: scale(3); opacity: 0; border-width: 0px; } }
 
 .result-display {
   position: absolute;
