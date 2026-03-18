@@ -31,6 +31,7 @@ let currentLevelIdx = 0;
 let streak = 0;
 let hasShield = false;
 let targetFireTime = 0;
+let activeTarget = { id: null, spawnedAt: 0, allowedTime: 0, resolved: true };
 
 function getModifier(level) {
   let rand = isOnline ? seededRandom() : Math.random();
@@ -603,7 +604,10 @@ function spawnDecoys(count, level) {
     const failHandler = (e) => {
       e.stopPropagation();
       if (e.cancelable) e.preventDefault();
-      if (state === 'FIRE') failGame(decoy.classList.contains('danger-target') ? 'hit danger target.' : 'hit wrong target.');
+      if (state === 'FIRE' && !activeTarget.resolved) {
+        activeTarget.resolved = true;
+        failGame(decoy.classList.contains('danger-target') ? 'hit danger target.' : 'hit wrong target.');
+      }
     };
     decoy.addEventListener('mousedown', failHandler);
     decoy.addEventListener('touchstart', failHandler, { passive: false });
@@ -661,18 +665,35 @@ function firePhase() {
   startTime = performance.now();
   const currentLevel = getLevelParams(currentLevelIdx);
 
+  activeTarget = {
+    id: Date.now() + Math.random(),
+    spawnedAt: performance.now(),
+    allowedTime: 1000, 
+    resolved: false
+  };
+  const tid = activeTarget.id;
+
   if (currentCommand === 'ignore') {
+    activeTarget.allowedTime = 1000;
     fireTimeout = setTimeout(() => {
-      successGame(); 
-    }, 1000); 
+      if (activeTarget.id === tid && !activeTarget.resolved) {
+        activeTarget.resolved = true;
+        successGame(); 
+      }
+    }, activeTarget.allowedTime); 
   } else {
     let win = currentLevel.window;
     if (currentCommand === 'double') win += 200; 
     if (currentCommand === 'hold') win += 500; 
 
+    activeTarget.allowedTime = win + 80;
+
     fireTimeout = setTimeout(() => {
-      failGame('too slow.');
-    }, win + 80);
+      if (activeTarget.id === tid && !activeTarget.resolved) {
+        activeTarget.resolved = true;
+        failGame('too slow.');
+      }
+    }, activeTarget.allowedTime);
   }
 }
 
@@ -730,6 +751,7 @@ function successGame() {
 
 function resetGameState() {
   clearAllTimers();
+  activeTarget.resolved = true;
   holdActive = false; doublePending = false;
   hasShield = false;
   UI.holdProgress.style.width = '0'; UI.holdProgress.style.height = '0';
@@ -924,7 +946,10 @@ function handleBackgroundClick(e) {
   } else if (state === 'WAIT') {
     failGame('too early.');
   } else if (state === 'FIRE') {
-    failGame('missed target.');
+    if (!activeTarget.resolved) {
+      activeTarget.resolved = true;
+      failGame('missed target.');
+    }
   }
 }
 
@@ -957,33 +982,56 @@ function handleInputDown(e) {
   }
 
   if (state === 'FIRE') {
+    if (activeTarget.resolved) return;
+
     const targetOuter = document.getElementById('target-outer');
     if (targetOuter) {
       targetOuter.style.transform = 'scale(0.8)';
       setTimeout(() => targetOuter.style.transform = '', 150);
     }
 
+    const elapsed = performance.now() - activeTarget.spawnedAt;
+
     if (currentCommand === 'ignore') {
+      activeTarget.resolved = true;
       failGame('bamboozled.');
     } else if (currentCommand === 'fire') {
-      spawnFloatingText(e, '+1', 'var(--green)');
-      successGame();
+      if (elapsed <= activeTarget.allowedTime) {
+        activeTarget.resolved = true;
+        spawnFloatingText(e, '+1', 'var(--green)');
+        successGame();
+      } else {
+        activeTarget.resolved = true;
+        failGame('too slow.');
+      }
     } else if (currentCommand === 'double') {
       if (!doublePending) {
         doublePending = true;
         clearTimeout(fireTimeout); 
-        doubleTimeout = setTimeout(() => failGame('too slow.'), 350); 
+        doubleTimeout = setTimeout(() => {
+           if (!activeTarget.resolved) {
+              activeTarget.resolved = true;
+              failGame('too slow.');
+           }
+        }, 350); 
       } else {
         clearTimeout(doubleTimeout);
-        spawnFloatingText(e, '+1', 'var(--green)');
-        successGame();
+        if (elapsed <= activeTarget.allowedTime + 350) {
+          activeTarget.resolved = true;
+          spawnFloatingText(e, '+1', 'var(--green)');
+          successGame();
+        } else {
+          activeTarget.resolved = true;
+          failGame('too slow.');
+        }
       }
     } else if (currentCommand === 'hold') {
       holdActive = true;
       UI.holdProgress.style.width = '150px';
       UI.holdProgress.style.height = '150px';
       holdTimeout = setTimeout(() => {
-        if (holdActive) {
+        if (holdActive && !activeTarget.resolved) {
+          activeTarget.resolved = true;
           spawnFloatingText(e, '+1', 'var(--green)');
           successGame();
         }
@@ -998,8 +1046,9 @@ function handleInputUp() {
     UI.holdProgress.style.width = '0';
     UI.holdProgress.style.height = '0';
     clearTimeout(holdTimeout);
-    // if they lift mouse before 400ms is up via successGame triggering
-    if (state !== 'RESULT') {
+    
+    if (!activeTarget.resolved) {
+      activeTarget.resolved = true;
       failGame('held too short.');
     }
   }
