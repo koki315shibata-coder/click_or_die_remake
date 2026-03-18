@@ -445,6 +445,10 @@ function startGame() {
   currentCommand = getCommand(currentLevelIdx + 1);
   updateFirebaseState(true);
 
+  if (isOnline && isHost && roomRef) {
+    update(roomRef, { state: 'playing' });
+  }
+
   state = 'WAIT';
   UI.gameArea.className = 'state-wait';
   UI.targetStatus.innerText = 'waiting...';
