@@ -99,6 +99,8 @@ const Lobby = {
   p1Slot: document.getElementById('p1-slot'),
   p2Slot: document.getElementById('p2-slot'),
   btnReady: document.getElementById('btn-ready'),
+  btnStart: document.getElementById('btn-start-game'),
+  hostMessage: document.getElementById('host-message'),
   btnLeave: document.getElementById('btn-leave-lobby'),
   countdown: document.getElementById('countdown-text')
 };
@@ -218,6 +220,11 @@ function showLobbyInfo() {
   Lobby.selection.classList.add('hidden');
   Lobby.info.classList.remove('hidden');
   Lobby.codeDisplay.innerText = roomCode;
+  
+  Lobby.btnStart.classList.add('hidden');
+  Lobby.btnStart.disabled = false;
+  Lobby.hostMessage.classList.add('hidden');
+  Lobby.countdown.classList.add('hidden');
 }
 
 function setupRoomListeners() {
@@ -252,12 +259,42 @@ function setupRoomListeners() {
         Lobby.p2Slot.innerHTML = `opponent: <span class="status">waiting for join...</span>`;
       }
 
-      if (players.length === 2 && !Lobby.btnReady.classList.contains('hidden') === false && data.state === 'lobby') {
-        Lobby.btnReady.classList.remove('hidden');
+      if (data.state === 'lobby') {
+        const allReady = players.length === 2 && Object.values(data.players).every(p => p.ready);
+        
+        if (players.length === 2 && !myData?.ready) {
+           Lobby.btnReady.classList.remove('hidden');
+        } else {
+           Lobby.btnReady.classList.add('hidden');
+        }
+
+        if (players.length < 2) {
+           Lobby.hostMessage.innerText = 'waiting for second player...';
+           Lobby.hostMessage.classList.remove('hidden');
+           Lobby.btnStart.classList.add('hidden');
+        } else if (!allReady) {
+           Lobby.hostMessage.innerText = 'waiting for players to ready up...';
+           Lobby.hostMessage.classList.remove('hidden');
+           Lobby.btnStart.classList.add('hidden');
+        } else if (allReady) {
+           if (isHost) {
+              Lobby.hostMessage.innerText = 'both players ready. press start game.';
+              Lobby.hostMessage.classList.remove('hidden');
+              Lobby.btnStart.classList.remove('hidden');
+           } else {
+              Lobby.hostMessage.innerText = 'waiting for host to start the game.';
+              Lobby.hostMessage.classList.remove('hidden');
+              Lobby.btnStart.classList.add('hidden');
+           }
+        }
       }
 
       if (data.state === 'starting' && state !== 'WAIT' && state !== 'FIRE') {
-        startCountdown(data.countdownEnd);
+        Lobby.hostMessage.classList.add('hidden');
+        Lobby.btnStart.classList.add('hidden');
+        if (Lobby.countdown.classList.contains('hidden')) {
+          startCountdown(data.countdownEnd);
+        }
       }
     }
 
@@ -297,6 +334,8 @@ async function sendAttack(type) {
 
 function startCountdown(endTime) {
   Lobby.btnReady.classList.add('hidden');
+  Lobby.btnStart.classList.add('hidden');
+  Lobby.hostMessage.classList.add('hidden');
   Lobby.countdown.classList.remove('hidden');
 
   const iv = setInterval(() => {
@@ -729,15 +768,23 @@ Lobby.btnJoin.addEventListener('click', () => {
 
 Lobby.btnReady.addEventListener('click', async () => {
   if (myPlayerRef) await update(myPlayerRef, { ready: true });
+});
+
+Lobby.btnStart.addEventListener('click', async () => {
+  Lobby.btnStart.disabled = true;
+  Lobby.btnStart.classList.add('hidden');
   if (isHost && roomRef) {
     const snap = await get(roomRef);
     const players = snap.val().players;
     const allReady = Object.values(players).every(p => p.ready);
     if (Object.keys(players).length === 2 && allReady) {
-      update(roomRef, {
+      await update(roomRef, {
         state: 'starting',
         countdownEnd: Date.now() + 3000
       });
+    } else {
+      Lobby.btnStart.disabled = false;
+      Lobby.btnStart.classList.remove('hidden');
     }
   }
 });
