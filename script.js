@@ -1,4 +1,7 @@
-// For Firebase JS SDK v7.20.0 and later, measurementId is optional
+import { initializeApp } from "https://www.gstatic.com/firebasejs/12.10.0/firebase-app.js";
+import { getAuth, signInAnonymously } from "https://www.gstatic.com/firebasejs/12.10.0/firebase-auth.js";
+import { getDatabase, ref, set, get, update, remove, onValue } from "https://www.gstatic.com/firebasejs/12.10.0/firebase-database.js";
+
 const firebaseConfig = {
   apiKey: "AIzaSyBHXbceS4jq3XvnBHZL7VakG5C_-8lzpAo",
   authDomain: "click-or-die.firebaseapp.com",
@@ -6,13 +9,14 @@ const firebaseConfig = {
   storageBucket: "click-or-die.firebasestorage.app",
   messagingSenderId: "1083953408426",
   appId: "1:1083953408426:web:5c8ea29b0d51eda3ec63d3",
-  measurementId: "G-CDBBH6W1T0"
-};// --- FIREBASE CONFIG (Add
-//  yours to play online) ---
+  measurementId: "G-CDBBH6W1T0",
+  databaseURL: "https://click-or-die-default-rtdb.firebaseio.com"
+};
 
 // Global Modes & States
 let isOnline = false;
 let db = null;
+let auth = null;
 let authUser = null;
 let roomCode = null;
 let isHost = false;
@@ -144,23 +148,19 @@ function showScreen(id) {
   document.getElementById(id).classList.add('active');
 }
 
-// --- FIREBASE INIT ---
+// --- FIREBASE INIT (Modular) ---
 async function initFirebase() {
-  if (firebaseConfig.apiKey === "YOUR_API_KEY") {
-    alert("Firebase is not configured! Check script.js lines 1-10.");
-    return false;
-  }
   if (!db) {
-    firebase.initializeApp(firebaseConfig);
-    auth = firebase.auth();
-    db = firebase.database();
     try {
-      const cred = await auth.signInAnonymously();
+      const app = initializeApp(firebaseConfig);
+      auth = getAuth(app);
+      db = getDatabase(app);
+      const cred = await signInAnonymously(auth);
       authUser = cred.user;
       return true;
     } catch (e) {
       console.error("Auth failed", e);
-      alert("Database authentication failed.");
+      alert("Database authentication failed. " + e.message);
       return false;
     }
   }
@@ -180,15 +180,15 @@ async function createRoom() {
   roomCode = makeId(4);
   isHost = true;
 
-  roomRef = db.ref('rooms/' + roomCode);
-  await roomRef.set({
+  roomRef = ref(db, 'rooms/' + roomCode);
+  await set(roomRef, {
     host: authUser.uid,
     seed: Math.floor(Math.random() * 1000000),
     state: 'lobby'
   });
 
-  myPlayerRef = db.ref('rooms/' + roomCode + '/players/' + authUser.uid);
-  await myPlayerRef.set({ ready: false, streak: 0, alive: true });
+  myPlayerRef = ref(db, 'rooms/' + roomCode + '/players/' + authUser.uid);
+  await set(myPlayerRef, { ready: false, streak: 0, alive: true });
 
   setupRoomListeners();
   showLobbyInfo();
@@ -199,16 +199,16 @@ async function joinRoom(code) {
   roomCode = code.toUpperCase();
   isHost = false;
 
-  roomRef = db.ref('rooms/' + roomCode);
-  const snap = await roomRef.once('value');
+  roomRef = ref(db, 'rooms/' + roomCode);
+  const snap = await get(roomRef);
   if (!snap.exists()) {
     Lobby.error.innerText = "Room not found.";
     Lobby.error.classList.remove('hidden');
     return;
   }
 
-  myPlayerRef = db.ref('rooms/' + roomCode + '/players/' + authUser.uid);
-  await myPlayerRef.set({ ready: false, streak: 0, alive: true });
+  myPlayerRef = ref(db, 'rooms/' + roomCode + '/players/' + authUser.uid);
+  await set(myPlayerRef, { ready: false, streak: 0, alive: true });
 
   setupRoomListeners();
   showLobbyInfo();
@@ -221,7 +221,7 @@ function showLobbyInfo() {
 }
 
 function setupRoomListeners() {
-  roomRef.on('value', snap => {
+  onValue(roomRef, snap => {
     const data = snap.val();
     if (!data) return; // Room closed
 
@@ -285,10 +285,10 @@ function handleReceivedAttack(type, attackId) {
   }
 }
 
-function sendAttack(type) {
-  const oppId = Object.keys(roomRef.child('players')).find(id => id !== authUser.uid);
+async function sendAttack(type) {
   if (!roomRef) return;
-  roomRef.update({
+  const oppId = Object.keys((await get(ref(db, 'rooms/' + roomCode + '/players'))).val()).find(id => id !== authUser.uid);
+  update(roomRef, {
     attackTarget: oppId || 'all',
     attackType: type,
     attackId: Date.now()
@@ -384,7 +384,7 @@ function resetUI() {
 
 function updateFirebaseState(alive) {
   if (isOnline && myPlayerRef) {
-    myPlayerRef.update({ alive, streak: streak });
+    update(myPlayerRef, { alive, streak: streak });
   }
 }
 
@@ -727,29 +727,28 @@ Lobby.btnJoin.addEventListener('click', () => {
   if (code.length === 4) joinRoom(code);
 });
 
-Lobby.btnReady.addEventListener('click', () => {
-  if (myPlayerRef) myPlayerRef.update({ ready: true });
+Lobby.btnReady.addEventListener('click', async () => {
+  if (myPlayerRef) await update(myPlayerRef, { ready: true });
   if (isHost && roomRef) {
-    roomRef.once('value').then(snap => {
-      const players = snap.val().players;
-      const allReady = Object.values(players).every(p => p.ready);
-      if (Object.keys(players).length === 2 && allReady) {
-        roomRef.update({
-          state: 'starting',
-          countdownEnd: Date.now() + 3000
-        });
-      }
-    });
+    const snap = await get(roomRef);
+    const players = snap.val().players;
+    const allReady = Object.values(players).every(p => p.ready);
+    if (Object.keys(players).length === 2 && allReady) {
+      update(roomRef, {
+        state: 'starting',
+        countdownEnd: Date.now() + 3000
+      });
+    }
   }
 });
 
-Lobby.btnLeave.addEventListener('click', () => {
-  if (myPlayerRef) myPlayerRef.remove();
+Lobby.btnLeave.addEventListener('click', async () => {
+  if (myPlayerRef) await remove(myPlayerRef);
   showScreen('screen-menu');
 });
 
-UI.btnQuit.addEventListener('click', () => {
-  if (myPlayerRef) myPlayerRef.remove();
+UI.btnQuit.addEventListener('click', async () => {
+  if (myPlayerRef) await remove(myPlayerRef);
   clearTimeout(autoNextTimeout);
   clearTimeout(waitTimeout);
   clearTimeout(fireTimeout);
