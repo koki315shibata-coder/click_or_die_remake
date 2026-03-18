@@ -24,11 +24,13 @@ let myPlayerRef = null;
 let oppPlayerRef = null;
 let roomRef = null;
 
-let state = 'START'; // START, WAIT, FIRE, RESULT
-let currentCommand = 'fire'; // fire, hold, double, ignore
-let currentModifier = 'normal'; // steal, shield, chaos
+let state = 'START'; // START, COUNTDOWN, WAIT, FIRE, RESULT
+let currentCommand = 'fire'; 
+let currentModifier = 'normal'; 
 let currentLevelIdx = 0;
 let streak = 0;
+let score = 0;
+let bestScoreAmt = parseInt(localStorage.getItem('cod_best_score_amt')) || 0;
 let hasShield = false;
 let targetFireTime = 0;
 let activeTarget = { id: null, spawnedAt: 0, allowedTime: 0, resolved: true };
@@ -259,7 +261,7 @@ function setupRoomListeners() {
 
       if (oppData) {
         Lobby.p2Slot.innerHTML = `opponent: <span class="status ${oppData.ready ? 'ready' : ''}">${oppData.ready ? 'READY' : 'WAITING...'}</span>`;
-        OppUI.streak.innerText = oppData.streak || 0;
+        OppUI.streak.innerText = oppData.score || 0;
         OppUI.state.innerText = oppData.alive ? 'alive' : 'dead';
         OppUI.state.style.color = oppData.alive ? 'var(--text-muted)' : 'var(--red)';
 
@@ -471,7 +473,7 @@ function resetUI() {
 
 function updateFirebaseState(alive) {
   if (isOnline && myPlayerRef) {
-    update(myPlayerRef, { alive, streak: streak });
+    update(myPlayerRef, { alive, streak: streak, score: score });
   }
 }
 
@@ -496,6 +498,7 @@ function clearAllTimers() {
 function startGame() {
   clearAllTimers();
   resetUI();
+  wipeTargets();
 
   holdActive = false;
   doublePending = false;
@@ -507,6 +510,37 @@ function startGame() {
     update(roomRef, { state: 'playing' });
   }
 
+  if (streak === 0 && !isOnline) {
+    state = 'COUNTDOWN';
+    UI.gameArea.className = 'state-wait';
+    UI.mainBtn.style.opacity = '0';
+    UI.mainBtn.style.pointerEvents = 'none';
+    UI.diffContainer.style.opacity = '0.2';
+    UI.diffContainer.style.pointerEvents = 'none';
+
+    let count = 3;
+    UI.targetStatus.innerText = count;
+    UI.statusPanel.innerText = 'get ready';
+    
+    beepInterval = setInterval(() => {
+      count--;
+      if (count > 0) {
+        UI.targetStatus.innerText = count;
+        playLockOn();
+      } else if (count === 0) {
+        UI.targetStatus.innerText = 'GO!';
+        playLockOn(); 
+      } else {
+        clearInterval(beepInterval);
+        startWaitPhase();
+      }
+    }, 600);
+  } else {
+    startWaitPhase();
+  }
+}
+
+function startWaitPhase() {
   state = 'WAIT';
   UI.gameArea.className = 'state-wait';
   UI.targetStatus.innerText = 'waiting...';
@@ -586,20 +620,12 @@ function spawnDecoys(count, level) {
     if (seededRandom() > 0.5) decoy.classList.add('danger-target');
     else decoy.classList.add('fake-target');
     
-    const p1 = getRandomPos(level);
-    const p2 = getRandomPos(level);
+    // Static placement. Keep stable for reaction window!
+    const p = getRandomPos(level);
     
-    decoy.style.transform = `translate(calc(-50% + ${p1.x}px), calc(-50% + ${p1.y}px))`;
+    decoy.style.transition = 'none';
+    decoy.style.transform = `translate(calc(-50% + ${p.x}px), calc(-50% + ${p.y}px))`;
     UI.gameArea.appendChild(decoy);
-    
-    const driftDur = Math.max(1.0, 3 - level * 0.15);
-    
-    requestAnimationFrame(() => {
-      requestAnimationFrame(() => {
-        decoy.style.transition = `transform ${driftDur}s linear`;
-        decoy.style.transform = `translate(calc(-50% + ${p2.x}px), calc(-50% + ${p2.y}px))`;
-      });
-    });
     
     const failHandler = (e) => {
       e.stopPropagation();
@@ -641,19 +667,13 @@ function firePhase() {
   const tw = document.getElementById('target-wrapper');
   if (currentLevelIdx >= 1) {
     const p1 = getRandomPos(currentLevelIdx);
-    const p2 = getRandomPos(currentLevelIdx);
     
+    // Spawn statically! Lock position so hitbox never slips.
     tw.style.transition = 'none';
     tw.style.transform = `translate(calc(-50% + ${p1.x}px), calc(-50% + ${p1.y}px))`;
-    
-    const driftDur = Math.max(1.0, 3 - currentLevelIdx * 0.1);
-    
-    requestAnimationFrame(() => {
-      requestAnimationFrame(() => {
-        tw.style.transition = `transform ${driftDur}s linear`;
-        tw.style.transform = `translate(calc(-50% + ${p2.x}px), calc(-50% + ${p2.y}px))`;
-      });
-    });
+  } else {
+    tw.style.transition = 'none';
+    tw.style.transform = `translate(-50%, -50%)`;
   }
 
   if (currentLevelIdx >= 2 || currentModifier === 'chaos') {
@@ -678,6 +698,7 @@ function firePhase() {
     fireTimeout = setTimeout(() => {
       if (activeTarget.id === tid && !activeTarget.resolved) {
         activeTarget.resolved = true;
+        grantScore(null, 500, 2, 'PASS');
         successGame(); 
       }
     }, activeTarget.allowedTime); 
@@ -738,7 +759,7 @@ function successGame() {
   updateFirebaseState(true);
 
   updateSelectorUI();
-  updateBestScore(rt);
+  updateBestScore();
   UI.lastScore.innerText = currentCommand === 'ignore' ? 'pass' : rt + 'ms';
 
   showResult(rt, currentCommand === 'ignore' ? 'passed' : null);
@@ -749,6 +770,29 @@ function successGame() {
   }, 1200);
 }
 
+function wipeTargets() {
+  document.querySelectorAll('.decoy-target').forEach(el => el.remove());
+  const tw = document.getElementById('target-wrapper');
+  if (tw) {
+    tw.style.transition = 'none';
+    tw.style.transform = 'translate(-50%, -50%)';
+  }
+}
+
+function grantScore(e, elapsed, basePoints, typeText) {
+  let isPerfect = elapsed < 200;
+  if (isPerfect && basePoints > 0) basePoints += 1; 
+  let pMult = (streak >= 10) ? 2.0 : (streak >= 5) ? 1.5 : 1.0;
+  let pts = Math.floor(basePoints * pMult);
+  score += pts;
+  
+  let tColor = isPerfect ? '#ff00ff' : 'var(--green)';
+  let pre = isPerfect ? `PERFECT x${pMult}! ` : (pMult > 1.0 ? `x${pMult} ` : '');
+  let tText = `${pre}${typeText} +${pts}`;
+  
+  spawnFloatingText(e, tText, tColor);
+}
+
 function resetGameState() {
   clearAllTimers();
   activeTarget.resolved = true;
@@ -756,17 +800,12 @@ function resetGameState() {
   hasShield = false;
   UI.holdProgress.style.width = '0'; UI.holdProgress.style.height = '0';
   streak = 0;
+  score = 0;
   speedModRounds = 0;
   speedModifier = 1.0;
   const activeBtn = Array.from(UI.diffBtns).find(b => b.classList.contains('active'));
   currentLevelIdx = activeBtn ? parseInt(activeBtn.dataset.level) - 1 : 0;
-
-  document.querySelectorAll('.decoy-target').forEach(el => el.remove());
-  const tw = document.getElementById('target-wrapper');
-  if (tw) {
-    tw.style.transition = 'none';
-    tw.style.transform = 'translate(-50%, -50%)';
-  }
+  wipeTargets();
 }
 
 function winGame(reason) {
@@ -832,7 +871,7 @@ function failGame(reason) {
   UI.statusPanel.innerText = reason;
   UI.statusPanel.style.color = 'var(--red)';
 
-  UI.resultTime.innerText = 'X';
+  UI.resultTime.innerText = `SCORE: ${score}`;
   UI.resultTime.style.color = 'var(--red)';
   UI.resultRank.innerText = reason;
   UI.resultRank.className = 'rank-slow';
@@ -874,12 +913,10 @@ function flashScreen(color) {
   UI.flashOverlay.className = color === 'white' ? 'flash-white' : 'flash-red';
 }
 
-function updateBestScore(rt) {
-  // don't track ignore rounds for best time
-  if (currentCommand === 'ignore') return;
-  if (!bestScore || rt < bestScore) {
-    bestScore = rt;
-    localStorage.setItem('cod_best_score', bestScore);
+function updateBestScore() {
+  if (!bestScoreAmt || score > bestScoreAmt) {
+    bestScoreAmt = score;
+    localStorage.setItem('cod_best_score_amt', bestScoreAmt);
   }
 }
 
@@ -888,8 +925,14 @@ function updateSidebar() {
   UI.levelDisplay.innerText = `level ${lvlParams.level} // ${lvlParams.name}`;
   UI.threatDisplay.innerText = lvlParams.threat;
 
-  if (bestScore) UI.bestScore.innerText = bestScore + 'ms';
-  UI.streakCounter.innerText = streak;
+  if (bestScoreAmt) UI.bestScore.innerText = bestScoreAmt + ' pts';
+  UI.streakCounter.innerText = score;
+  
+  const scLabel = document.getElementById('streak-counter').previousElementSibling;
+  if (scLabel) scLabel.innerText = 'SCORE';
+  
+  const bLabel = document.getElementById('best-score').previousElementSibling;
+  if (bLabel) bLabel.innerText = 'BEST SCORE';
 }
 
 function updateSelectorUI() {
@@ -944,7 +987,15 @@ function handleBackgroundClick(e) {
       resetGameState(); 
     }
   } else if (state === 'WAIT') {
-    failGame('too early.');
+    if (performance.now() >= targetFireTime - 80) {
+      clearTimeout(waitTimeout);
+      clearInterval(beepInterval);
+      firePhase();
+      activeTarget.resolved = true;
+      failGame('missed target.');
+    } else {
+      failGame('too early.');
+    }
   } else if (state === 'FIRE') {
     if (!activeTarget.resolved) {
       activeTarget.resolved = true;
@@ -998,7 +1049,7 @@ function handleInputDown(e) {
     } else if (currentCommand === 'fire') {
       if (elapsed <= activeTarget.allowedTime) {
         activeTarget.resolved = true;
-        spawnFloatingText(e, '+1', 'var(--green)');
+        grantScore(e, elapsed, 1, 'HIT');
         successGame();
       } else {
         activeTarget.resolved = true;
@@ -1018,7 +1069,7 @@ function handleInputDown(e) {
         clearTimeout(doubleTimeout);
         if (elapsed <= activeTarget.allowedTime + 350) {
           activeTarget.resolved = true;
-          spawnFloatingText(e, '+1', 'var(--green)');
+          grantScore(e, elapsed, 2, 'DOUBLE');
           successGame();
         } else {
           activeTarget.resolved = true;
@@ -1032,7 +1083,7 @@ function handleInputDown(e) {
       holdTimeout = setTimeout(() => {
         if (holdActive && !activeTarget.resolved) {
           activeTarget.resolved = true;
-          spawnFloatingText(e, '+1', 'var(--green)');
+          grantScore(e, elapsed, 3, 'HELD');
           successGame();
         }
       }, 400);
