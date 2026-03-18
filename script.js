@@ -232,15 +232,17 @@ function setupRoomListeners() {
     const data = snap.val();
     if (!data) return; // Room closed
 
+    console.log('[Firebase] Room snapshot received. State:', data.state, '| gameStarted:', data.gameStarted);
+
     globalSeed = data.seed;
 
     if (data.players) {
       const players = Object.keys(data.players);
-      const myData = data.players[authUser.uid];
+      const myData = data.players[authUser.uid] || {};
       const oppId = players.find(id => id !== authUser.uid);
       const oppData = oppId ? data.players[oppId] : null;
 
-      Lobby.p1Slot.innerHTML = `you: <span class="status ${myData?.ready ? 'ready' : ''}">${myData?.ready ? 'READY' : 'WAITING...'}</span>`;
+      Lobby.p1Slot.innerHTML = `you: <span class="status ${myData.ready ? 'ready' : ''}">${myData.ready ? 'READY' : 'WAITING...'}</span>`;
 
       if (oppData) {
         Lobby.p2Slot.innerHTML = `opponent: <span class="status ${oppData.ready ? 'ready' : ''}">${oppData.ready ? 'READY' : 'WAITING...'}</span>`;
@@ -262,7 +264,7 @@ function setupRoomListeners() {
       if (data.state === 'lobby') {
         const allReady = players.length === 2 && Object.values(data.players).every(p => p.ready);
         
-        if (players.length === 2 && !myData?.ready) {
+        if (players.length === 2 && !myData.ready) {
            Lobby.btnReady.classList.remove('hidden');
         } else {
            Lobby.btnReady.classList.add('hidden');
@@ -281,6 +283,7 @@ function setupRoomListeners() {
               Lobby.hostMessage.innerText = 'both players ready. press start game.';
               Lobby.hostMessage.classList.remove('hidden');
               Lobby.btnStart.classList.remove('hidden');
+              Lobby.btnStart.disabled = false;
            } else {
               Lobby.hostMessage.innerText = 'waiting for host to start the game.';
               Lobby.hostMessage.classList.remove('hidden');
@@ -289,10 +292,13 @@ function setupRoomListeners() {
         }
       }
 
-      if (data.state === 'starting' && state !== 'WAIT' && state !== 'FIRE') {
+      const isStarting = data.state === 'starting' || data.gameStarted === true;
+      if (isStarting && state !== 'WAIT' && state !== 'FIRE') {
+        console.log('[Lobby] Transitioning to start countdown. Target:', data.countdownEnd);
         Lobby.hostMessage.classList.add('hidden');
         Lobby.btnStart.classList.add('hidden');
         if (Lobby.countdown.classList.contains('hidden')) {
+          console.log('[Lobby] Initiating startCountdown function natively.');
           startCountdown(data.countdownEnd);
         }
       }
@@ -775,21 +781,27 @@ Lobby.btnReady.addEventListener('click', async () => {
 });
 
 Lobby.btnStart.addEventListener('click', async () => {
+  console.log('[Lobby] Host clicked Start Game');
   Lobby.btnStart.disabled = true;
   Lobby.btnStart.classList.add('hidden');
+  
   if (isHost && roomRef) {
-    const snap = await get(roomRef);
-    const players = snap.val().players;
-    const allReady = Object.values(players).every(p => p.ready);
-    if (Object.keys(players).length === 2 && allReady) {
+    try {
+      console.log('[Lobby] Pushing start data to Firebase...');
       await update(roomRef, {
         state: 'starting',
+        gameStarted: true,
+        startedAt: Date.now(),
         countdownEnd: Date.now() + 3000
       });
-    } else {
+      console.log('[Lobby] Successfully wrote start state to Firebase.');
+    } catch (e) {
+      console.error('[Lobby] Firebase Error on Start Game:', e);
       Lobby.btnStart.disabled = false;
       Lobby.btnStart.classList.remove('hidden');
     }
+  } else {
+    console.error('[Lobby] Start failed: not host, or roomRef is missing.', { isHost, hasRef: !!roomRef });
   }
 });
 
