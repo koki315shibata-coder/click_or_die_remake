@@ -616,15 +616,7 @@ function spawnDecoys(count, level) {
     decoy.addEventListener('touchstart', failHandler, { passive: false });
   }
 }
-function wipeTargets() {
-  document.querySelectorAll('.decoy-target').forEach(el => el.remove());
-  const tw = document.getElementById('target-wrapper');
-  if (tw) {
-    tw.style.transition = 'none';
-    tw.style.transform = 'translate(-50%, -50%)';
-  }
-  clearTemporaryFeedback();
-}
+// No duplicate wipeTargets
 
 function firePhase() {
   state = 'FIRE';
@@ -740,7 +732,7 @@ function showTemporaryFeedback(timeText, rankClass, rankText, duration = 400) {
 }
 
 function wipeTargets() {
-  document.querySelectorAll('.decoy-target').forEach(el => el.remove());
+  document.querySelectorAll('.fake-target').forEach(el => el.remove());
   const tw = document.getElementById('target-wrapper');
   if (tw) {
     tw.style.transition = 'none';
