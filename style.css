@@ -168,40 +168,56 @@ main {
 }
 
 /* GAME STATES */
-.state-wait #target {
-  opacity: 1;
+.state-wait #target-wrapper {
   animation: waitShrink 3s linear forwards;
 }
-.state-wait .target-ring.outer {
-  border-color: var(--red);
-  animation: pulseRed var(--pulse-dur, 0.8s) infinite alternate cubic-bezier(0.4, 0, 0.6, 1);
-}
-.state-wait .target-ring.center-dot { background-color: var(--red); }
-.state-wait #target-status-text { color: var(--red); }
 
-/* command: fire */
-.state-fire #target { opacity: 1; transform: scale(0.6) !important; animation: none;}
-.state-fire .target-ring.outer { border: 4px solid var(--green); animation: none;}
-.state-fire .target-ring.center-dot { background-color: var(--green); }
-.state-fire #target-status-text { color: var(--green); }
+/* --- INACTIVE / WAIT STATE (Dim Red) --- */
+.state-wait #target-outer {
+  border-color: rgba(239, 69, 101, 0.3) !important;
+  box-shadow: none !important;
+  animation: none !important;
+}
+.state-wait #target-inner {
+  background: rgba(239, 69, 101, 0.3) !important;
+  box-shadow: none !important;
+  animation: none !important;
+}
+.state-wait #target-status-text { color: var(--red); opacity: 0; }
+
+/* --- ACTIVE / CLICKABLE STATES (Massive Solid Green Glows) --- */
+.state-fire #target-outer { 
+  background-color: var(--green) !important; 
+  border-color: var(--green) !important; 
+  box-shadow: 0 0 60px rgba(44, 182, 125, 0.9), inset 0 0 40px rgba(44, 182, 125, 0.7) !important; 
+  animation: pulseGreen 0.2s infinite alternate cubic-bezier(0.4, 0, 0.6, 1) !important;
+}
+.state-fire #target-inner { display: none !important; }
+.state-fire #target-status-text { color: var(--bg); font-weight: 900; z-index: 200; position: absolute; text-align: center; }
 
 /* command: hold */
-.state-hold #target { opacity: 1; transform: scale(0.7) !important; animation: none;}
-.state-hold .target-ring.outer { border: 4px dashed var(--green); animation: pulseGreen 0.2s infinite alternate;}
-.state-hold .target-ring.center-dot { background-color: var(--green); }
-.state-hold #target-status-text { color: var(--green); }
+.state-hold #target-outer { 
+  background-color: rgba(44, 182, 125, 0.6) !important; 
+  border: 10px dashed var(--green) !important; 
+  box-shadow: 0 0 60px rgba(44, 182, 125, 0.9) !important; 
+  animation: pulseGreen 0.2s infinite alternate !important;
+}
+.state-hold #target-inner { background: var(--green) !important; box-shadow: 0 0 20px rgba(44, 182, 125, 0.8) !important; }
+.state-hold #target-status-text { color: var(--bg); font-weight: 900; z-index: 200; position: absolute; text-align: center; }
 
 /* command: double */
-.state-double #target { opacity: 1; transform: scale(0.6) !important; animation: none;}
-.state-double .target-ring.outer { border: 6px double var(--green); animation: none;}
-.state-double .target-ring.center-dot { background-color: var(--green); }
-.state-double #target-status-text { color: var(--green); }
+.state-double #target-outer { 
+  background-color: rgba(44, 182, 125, 0.8) !important; 
+  border: 14px double var(--green) !important; 
+  box-shadow: 0 0 60px rgba(44, 182, 125, 0.9) !important; 
+}
+.state-double #target-inner { background: var(--bg) !important; box-shadow: 0 0 20px rgba(44, 182, 125, 0.8) !important; }
+.state-double #target-status-text { color: var(--bg); font-weight: 900; z-index: 200; position: absolute; text-align: center; }
 
-/* command: ignore (fake) */
-.state-ignore #target { opacity: 0.8; transform: scale(0.5) !important; animation: none;}
-.state-ignore .target-ring.outer { border: 2px solid var(--text-muted); animation: none;}
-.state-ignore .target-ring.center-dot { background-color: var(--text-muted); }
-.state-ignore #target-status-text { color: var(--text-muted); }
+/* command: ignore - Stay Dim Red! */
+.state-ignore #target-outer { border-color: rgba(239, 69, 101, 0.3) !important; box-shadow: none !important; animation: none !important;}
+.state-ignore #target-inner { background: rgba(239, 69, 101, 0.3) !important; box-shadow: none !important; animation: none !important;}
+.state-ignore #target-status-text { color: var(--red); opacity: 0; }
 
 /* hold progress visual */
 .hold-progress {

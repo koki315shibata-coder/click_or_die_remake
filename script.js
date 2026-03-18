@@ -777,11 +777,12 @@ function successGame() {
   }, 500);
 }
 
-function clearFeedbackUI() {
+function clearTemporaryFeedback() {
   document.querySelectorAll('.floating-text').forEach(e => e.remove());
   UI.gameArea.className = '';
   document.body.classList.remove('screen-shake', 'screen-shake-small');
   UI.targetStatus.innerText = '';
+  UI.resultDisplay.classList.add('hidden');
 }
 
 function wipeTargets() {
@@ -791,7 +792,7 @@ function wipeTargets() {
     tw.style.transition = 'none';
     tw.style.transform = 'translate(-50%, -50%)';
   }
-  clearFeedbackUI();
+  clearTemporaryFeedback();
 }
 
 function grantScore(e, elapsed, basePoints, typeText) {
