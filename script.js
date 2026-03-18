@@ -35,6 +35,7 @@ let hasShield = false;
 let targetFireTime = 0;
 let activeTarget = { id: null, spawnedAt: 0, allowedTime: 0, resolved: true };
 let resultStartTime = 0;
+let feedbackTimeout = null;
 
 function getModifier(level) {
   let rand = isOnline ? seededRandom() : Math.random();
@@ -776,11 +777,41 @@ function successGame() {
 }
 
 function clearTemporaryFeedback() {
+  if (feedbackTimeout) {
+    clearTimeout(feedbackTimeout);
+    feedbackTimeout = null;
+  }
   document.querySelectorAll('.floating-text').forEach(e => e.remove());
   UI.gameArea.className = '';
   document.body.classList.remove('screen-shake', 'screen-shake-small');
   UI.targetStatus.innerText = '';
   UI.resultDisplay.classList.add('hidden');
+}
+
+function showTemporaryFeedback(timeText, rankClass, rankText, duration = 400) {
+  if (feedbackTimeout) clearTimeout(feedbackTimeout);
+  
+  UI.resultTime.innerText = timeText;
+  UI.resultRank.innerText = rankText || '';
+  if (rankClass) {
+    UI.resultRank.className = rankClass;
+  } else {
+    UI.resultRank.className = '';
+  }
+  
+  if (timeText === 'WIN') {
+    UI.resultTime.style.color = 'var(--green)';
+  } else if (timeText.startsWith('SCORE:')) {
+    UI.resultTime.style.color = 'var(--red)';
+  } else {
+    UI.resultTime.style.color = 'var(--text-main)';
+  }
+
+  UI.resultDisplay.classList.remove('hidden');
+  
+  feedbackTimeout = setTimeout(() => {
+    clearTemporaryFeedback();
+  }, duration);
 }
 
 function wipeTargets() {
@@ -836,12 +867,7 @@ function winGame(reason) {
   UI.statusPanel.innerText = reason;
   UI.statusPanel.style.color = 'var(--text-main)';
 
-  UI.resultTime.innerText = 'WIN';
-  UI.resultTime.style.color = 'var(--green)';
-  UI.resultRank.innerText = 'survivor';
-  UI.resultRank.className = 'rank-godlike';
-
-  UI.resultDisplay.classList.remove('hidden');
+  showTemporaryFeedback('WIN', 'rank-godlike', 'survivor', 800);
 
   updateFirebaseState(true);
   updateSelectorUI();
@@ -885,12 +911,7 @@ function failGame(reason) {
   UI.statusPanel.innerText = reason;
   UI.statusPanel.style.color = 'var(--red)';
 
-  UI.resultTime.innerText = `SCORE: ${score}`;
-  UI.resultTime.style.color = 'var(--red)';
-  UI.resultRank.innerText = reason;
-  UI.resultRank.className = 'rank-slow';
-
-  UI.resultDisplay.classList.remove('hidden');
+  showTemporaryFeedback(`SCORE: ${score}`, 'rank-slow', reason, 600);
 
   updateFirebaseState(false);
   updateSelectorUI();
@@ -903,22 +924,16 @@ function failGame(reason) {
 
 function showResult(rt, overrideRank) {
   if (overrideRank) {
-    UI.resultTime.innerText = overrideRank;
-    UI.resultRank.innerText = '';
+    showTemporaryFeedback(overrideRank, 'rank-godlike', '', 400);
   } else {
-    UI.resultTime.innerText = rt + 'ms';
-    UI.resultTime.style.color = 'var(--text-main)';
-
     let rank = ''; let rankClass = '';
     if (rt < 150) { rank = 'godlike'; rankClass = 'rank-godlike'; }
     else if (rt < 200) { rank = 'elite'; rankClass = 'rank-elite'; }
     else if (rt < 250) { rank = 'sharp'; rankClass = 'rank-sharp'; }
     else { rank = 'slow'; rankClass = 'rank-slow'; }
 
-    UI.resultRank.innerText = rank;
-    UI.resultRank.className = rankClass;
+    showTemporaryFeedback(rt + 'ms', rankClass, rank, 400);
   }
-  UI.resultDisplay.classList.remove('hidden');
 }
 
 function flashScreen(color) {
