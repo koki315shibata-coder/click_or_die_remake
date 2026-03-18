@@ -270,6 +270,22 @@ function setupRoomListeners() {
            Lobby.btnReady.classList.add('hidden');
         }
 
+        // Handle Host Privilege Recovery & Auto-Promotion
+        if (data.host === authUser.uid) {
+          isHost = true;
+        } else if (players.length > 0 && !players.includes(data.host)) {
+          // If the original host left the room completely, promote the first active player
+          if (players[0] === authUser.uid) {
+            console.log('[Lobby] Original host missing. Auto-promoting to host.');
+            isHost = true;
+            update(roomRef, { host: authUser.uid });
+          } else {
+            isHost = false;
+          }
+        } else {
+          isHost = false;
+        }
+
         if (players.length < 2) {
            Lobby.hostMessage.innerText = 'waiting for second player...';
            Lobby.hostMessage.classList.remove('hidden');
