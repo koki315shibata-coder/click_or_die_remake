@@ -619,11 +619,11 @@ function spawnFloatingText(e, text, color) {
 
 function getRandomPos(level) {
   const tSize = 100;
-  const maxW = window.innerWidth - tSize;
-  const maxH = window.innerHeight - tSize - 100;
+  const maxW = window.innerWidth - tSize - 40;
+  const maxH = window.innerHeight - tSize - 160;
   
-  const spreadX = Math.min(maxW / 2, level * 40);
-  const spreadY = Math.min(maxH / 2, level * 40);
+  const spreadX = maxW / 2;
+  const spreadY = maxH / 2;
   
   const x = (seededRandom() * spreadX * 2) - spreadX;
   const y = (seededRandom() * spreadY * 2) - spreadY;
