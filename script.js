@@ -519,16 +519,6 @@ function startWaitPhase() {
 
   let modifierText = 'wait for it';
   UI.statusPanel.style.color = 'var(--text-muted)';
-  if (currentModifier === 'shield') {
-    modifierText = 'SHIELD ROUND';
-    UI.statusPanel.style.color = '#ffd700';
-  } else if (currentModifier === 'steal') {
-    modifierText = 'STEAL ROUND';
-    UI.statusPanel.style.color = 'var(--red)';
-  } else if (currentModifier === 'chaos') {
-    modifierText = 'CHAOS ROUND';
-    UI.statusPanel.style.color = '#aa00ff';
-  }
   UI.statusPanel.innerText = modifierText;
 
   UI.mainBtn.style.opacity = '0';
@@ -688,15 +678,6 @@ function successGame() {
 
   playSuccess();
   streak++;
-  if (speedModRounds > 0) speedModRounds--;
-
-  if (currentModifier === 'shield') {
-    hasShield = true;
-    spawnFloatingText(null, 'SHIELDED', '#ffd700');
-    UI.modeBadge.innerText = isOnline ? 'online versus [SHIELD]' : 'offline [SHIELD]';
-  } else if (currentModifier === 'steal' && isOnline) {
-    sendAttack('steal');
-  }
 
   // Online Attacks
   if (isOnline) {
