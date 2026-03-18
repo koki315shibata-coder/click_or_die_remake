@@ -568,6 +568,24 @@ function startWaitPhase() {
 
   document.documentElement.style.setProperty('--pulse-dur', `${lvlParams.pulseDur}s`);
 
+  // --- Target Positioning Phase ---
+  const tw = document.getElementById('target-wrapper');
+  if (currentLevelIdx >= 1) {
+    const p1 = getRandomPos(currentLevelIdx);
+    tw.style.transition = 'transform 0.4s ease-out';
+    tw.style.transform = `translate(calc(-50% + ${p1.x}px), calc(-50% + ${p1.y}px))`;
+  } else {
+    tw.style.transition = 'transform 0.4s ease-out';
+    tw.style.transform = `translate(-50%, -50%)`;
+  }
+
+  if (currentLevelIdx >= 2 || currentModifier === 'chaos') {
+    let decoyCount = Math.min(5, Math.floor(currentLevelIdx / 2));
+    if (currentModifier === 'chaos') decoyCount += 3;
+    spawnDecoys(decoyCount, currentLevelIdx);
+  }
+  // --------------------------------
+
   let rng = isOnline ? seededRandom() : Math.random();
   const minDelay = Math.max(600, 1500 - (currentLevelIdx * 50));
   const maxDelay = Math.min(5000, 3500 + (currentLevelIdx * 100));
@@ -620,12 +638,17 @@ function spawnDecoys(count, level) {
     if (seededRandom() > 0.5) decoy.classList.add('danger-target');
     else decoy.classList.add('fake-target');
     
-    // Static placement. Keep stable for reaction window!
+    // Spawn in center and slide out during wait phase
     const p = getRandomPos(level);
     
     decoy.style.transition = 'none';
-    decoy.style.transform = `translate(calc(-50% + ${p.x}px), calc(-50% + ${p.y}px))`;
+    decoy.style.transform = `translate(-50%, -50%)`;
     UI.gameArea.appendChild(decoy);
+    
+    void decoy.offsetWidth; // flush styles
+
+    decoy.style.transition = 'transform 0.4s ease-out';
+    decoy.style.transform = `translate(calc(-50% + ${p.x}px), calc(-50% + ${p.y}px))`;
     
     const failHandler = (e) => {
       e.stopPropagation();
@@ -661,25 +684,7 @@ function firePhase() {
   } else if (currentCommand === 'ignore') {
     UI.targetStatus.innerText = 'ignore.';
     UI.statusPanel.innerText = 'don\'t touch';
-    // Subtle cue
-  }
-
-  const tw = document.getElementById('target-wrapper');
-  if (currentLevelIdx >= 1) {
-    const p1 = getRandomPos(currentLevelIdx);
-    
-    // Spawn statically! Lock position so hitbox never slips.
-    tw.style.transition = 'none';
-    tw.style.transform = `translate(calc(-50% + ${p1.x}px), calc(-50% + ${p1.y}px))`;
-  } else {
-    tw.style.transition = 'none';
-    tw.style.transform = `translate(-50%, -50%)`;
-  }
-
-  if (currentLevelIdx >= 2 || currentModifier === 'chaos') {
-    let decoyCount = Math.min(5, Math.floor(currentLevelIdx / 2));
-    if (currentModifier === 'chaos') decoyCount += 3;
-    spawnDecoys(decoyCount, currentLevelIdx);
+  // Subtle cue
   }
 
   startTime = performance.now();
