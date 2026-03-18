@@ -34,6 +34,7 @@ let bestScoreAmt = parseInt(localStorage.getItem('cod_best_score_amt')) || 0;
 let hasShield = false;
 let targetFireTime = 0;
 let activeTarget = { id: null, spawnedAt: 0, allowedTime: 0, resolved: true };
+let resultStartTime = 0;
 
 function getModifier(level) {
   let rand = isOnline ? seededRandom() : Math.random();
@@ -725,11 +726,12 @@ function firePhase() {
 
 function successGame() {
   const rt = Math.floor(performance.now() - startTime);
-  clearTimeout(fireTimeout);
-  if (holdTimeout) clearTimeout(holdTimeout);
+  clearAllTimers(); 
+  activeTarget.resolved = true;
   holdActive = false; doublePending = false;
 
   state = 'RESULT';
+  resultStartTime = performance.now();
   UI.gameArea.className = 'state-success';
   UI.targetStatus.innerText = 'nice.';
 
@@ -772,7 +774,14 @@ function successGame() {
 
   autoNextTimeout = setTimeout(() => {
     if (state === 'RESULT') startGame();
-  }, 1200);
+  }, 500);
+}
+
+function clearFeedbackUI() {
+  document.querySelectorAll('.floating-text').forEach(e => e.remove());
+  UI.gameArea.className = '';
+  document.body.classList.remove('screen-shake', 'screen-shake-small');
+  UI.targetStatus.innerText = '';
 }
 
 function wipeTargets() {
@@ -782,6 +791,7 @@ function wipeTargets() {
     tw.style.transition = 'none';
     tw.style.transform = 'translate(-50%, -50%)';
   }
+  clearFeedbackUI();
 }
 
 function grantScore(e, elapsed, basePoints, typeText) {
@@ -866,6 +876,7 @@ function failGame(reason) {
   UI.diffContainer.style.pointerEvents = 'auto';
 
   state = 'RESULT';
+  resultStartTime = performance.now();
   UI.gameArea.className = 'state-start';
   document.body.classList.add('screen-shake');
 
@@ -981,6 +992,7 @@ function handleBackgroundClick(e) {
   }
   initAudio();
   if (state === 'START' || state === 'RESULT') {
+    if (state === 'RESULT' && performance.now() - resultStartTime < 300) return;
     if (!isOnline) {
       startGame();
     } else {
@@ -1016,6 +1028,7 @@ function handleInputDown(e) {
   }
   initAudio();
   if (state === 'START' || state === 'RESULT') {
+    if (state === 'RESULT' && performance.now() - resultStartTime < 300) return;
     if (!isOnline) {
       startGame();
     } else {
