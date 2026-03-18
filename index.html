@@ -6,43 +6,100 @@
   <title>click or die.</title>
   <link rel="stylesheet" href="style.css">
   <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@400;700;900&family=Inter:wght@400;500;700&display=swap" rel="stylesheet">
+  
+  <!-- Firebase SDK (Compat) -->
+  <script src="https://www.gstatic.com/firebasejs/10.4.0/firebase-app-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/10.4.0/firebase-auth-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/10.4.0/firebase-database-compat.js"></script>
 </head>
 <body>
-  <div id="game-container">
-    <div id="flash-overlay"></div>
-    <div id="click-layer"></div>
+  <div id="flash-overlay"></div>
+  <div id="click-layer"></div>
 
-    <!-- Header area -->
+  <!-- MAIN MENU -->
+  <div id="screen-menu" class="screen active">
+    <div class="menu-content">
+      <h1 class="title">click or die.</h1>
+      <p class="subtitle">one miss and it ends.</p>
+      <div class="menu-actions" style="margin-top:40px; width:100%">
+        <button id="btn-offline" class="menu-btn">play offline</button>
+        <button id="btn-online" class="menu-btn" style="background:transparent; border:2px solid var(--text-muted); color:var(--text-muted)">play online</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ONLINE LOBBY -->
+  <div id="screen-lobby" class="screen hidden">
+    <div class="lobby-content">
+      <h1 class="title">lobby.</h1>
+      
+      <div id="lobby-selection">
+        <button id="btn-create-room" class="menu-btn">create room</button>
+        <p class="subtitle" style="margin:20px 0;">-- or --</p>
+        <div class="join-section">
+          <input type="text" id="room-code-input" placeholder="4-letter code" maxlength="4" />
+          <button id="btn-join-room" class="menu-btn">join</button>
+        </div>
+        <p id="lobby-error" class="error-text hidden"></p>
+      </div>
+
+      <div id="room-info" class="hidden" style="width:100%">
+        <p class="subtitle">room code: <strong id="display-room-code" style="color:var(--text-main); font-size:1.5rem; letter-spacing:4px">----</strong></p>
+        <div class="players-status">
+          <div class="player-slot" id="p1-slot">you: <span class="status">waiting...</span></div>
+          <div class="player-slot" id="p2-slot">opponent: <span class="status">waiting...</span></div>
+        </div>
+        <button id="btn-ready" class="menu-btn hidden">ready up</button>
+        <p id="countdown-text" class="hidden" style="font-size:3rem; margin-top:20px; font-weight:900; color:var(--red)"></p>
+      </div>
+      
+      <button id="btn-leave-lobby" class="link-btn" style="margin-top:20px">&lt; back</button>
+    </div>
+  </div>
+
+  <!-- GAME INTERFACE -->
+  <div id="screen-game" class="screen hidden">
     <header>
       <div class="brand">
         <h1>click or die.</h1>
+        <p id="mode-badge" class="subtitle">offline mode</p>
       </div>
-      <div class="stats">
-        <div class="stat"><span class="label">best</span><span class="value" id="best-score">--</span></div>
-        <div class="stat"><span class="label">last</span><span class="value" id="last-score">--</span></div>
-        <div class="stat"><span class="label">streak</span><span class="value" id="streak-counter">0</span></div>
+      
+      <div style="display:flex; gap:40px;">
+          <!-- Opponent stats (Online only) -->
+          <div id="opp-stats" class="stats hidden">
+            <div class="stat"><span class="label">opp streak</span><span class="value opp-color" id="opp-streak-counter">0</span></div>
+            <div class="stat"><span class="label">opp state</span><span class="value" id="opp-state-text" style="font-size:1.2rem; color:var(--text-muted)">alive</span></div>
+          </div>
+    
+          <!-- Player stats -->
+          <div class="stats">
+            <div class="stat" id="best-stat-container"><span class="label">best</span><span class="value" id="best-score">--</span></div>
+            <div class="stat"><span class="label">last</span><span class="value" id="last-score">--</span></div>
+            <div class="stat"><span class="label">streak</span><span class="value" id="streak-counter">0</span></div>
+          </div>
       </div>
     </header>
 
-    <!-- Center target area -->
+    <!-- Center Screen Alerts (Attacks) -->
+    <div id="center-alert-container"></div>
+
     <main id="game-area" class="state-start">
       <div id="target-wrapper">
         <div id="target">
-          <!-- refined target -->
-          <div class="target-ring outer"></div>
-          <div class="target-ring center-dot"></div>
+          <div class="target-ring outer" id="target-outer"></div>
+          <div class="target-ring center-dot" id="target-inner"></div>
+          <div class="hold-progress" id="hold-progress"></div>
         </div>
         <div id="target-status-text">one miss and it ends.</div>
       </div>
       
-      <!-- Result time display -->
       <div class="result-display hidden" id="result-display">
         <div id="result-time"></div>
         <div id="result-rank"></div>
       </div>
     </main>
 
-    <!-- Footer / controls -->
     <footer>
       <div class="level-info">
         <h2 id="level-display">level 1 // recruit</h2>
@@ -63,9 +120,11 @@
       <div class="actions">
         <div id="status-panel">ready.</div>
         <button id="main-btn">play</button>
+        <button id="btn-quit" class="link-btn hidden" style="margin-top:15px">&lt; quit game</button>
       </div>
     </footer>
   </div>
+
   <script src="script.js"></script>
 </body>
 </html>

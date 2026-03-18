@@ -1,70 +1,111 @@
-// script.js
-// Game variables
-function getLevelParams(idx) {
-  const baseLevels = [
-    { name: 'recruit', window: 1200, threat: 'too easy' },
-    { name: 'soldier', window: 1000, threat: 'mild' },
-    { name: 'veteran', window: 800, threat: 'getting warm' },
-    { name: 'elite', window: 650, threat: 'intense' },
-    { name: 'omega', window: 500, threat: 'lethal' }
-  ];
-  
-  let actualLevel = idx + 1;
-  let params = { level: actualLevel };
-  
-  if (idx < 5) {
-    params.name = baseLevels[idx].name;
-    params.window = baseLevels[idx].window;
-    params.threat = baseLevels[idx].threat;
-    params.pulseDur = 0.8 - (idx * 0.1); 
-  } else {
-    let diff = idx - 4;
-    let pluses = '+'.repeat(Math.min(diff, 3)); 
-    params.name = 'omega' + pluses;
-    params.window = Math.max(180, 500 - (diff * 25)); 
-    
-    if (actualLevel < 10) params.threat = 'lethal';
-    else if (actualLevel < 15) params.threat = 'terminal';
-    else params.threat = 'god-tier';
-    
-    params.pulseDur = Math.max(0.1, 0.4 - (diff * 0.03));
-  }
-  
-  return params;
-}
+// For Firebase JS SDK v7.20.0 and later, measurementId is optional
+const firebaseConfig = {
+  apiKey: "AIzaSyBHXbceS4jq3XvnBHZL7VakG5C_-8lzpAo",
+  authDomain: "click-or-die.firebaseapp.com",
+  projectId: "click-or-die",
+  storageBucket: "click-or-die.firebasestorage.app",
+  messagingSenderId: "1083953408426",
+  appId: "1:1083953408426:web:5c8ea29b0d51eda3ec63d3",
+  measurementId: "G-CDBBH6W1T0"
+};// --- FIREBASE CONFIG (Add
+//  yours to play online) ---
+
+// Global Modes & States
+let isOnline = false;
+let db = null;
+let authUser = null;
+let roomCode = null;
+let isHost = false;
+let myPlayerRef = null;
+let oppPlayerRef = null;
+let roomRef = null;
 
 let state = 'START'; // START, WAIT, FIRE, RESULT
+let currentCommand = 'fire'; // fire, hold, double, ignore
 let currentLevelIdx = 0;
 let streak = 0;
 let bestScore = localStorage.getItem('cod_best_score') || null;
 
 let waitTimeout = null;
 let fireTimeout = null;
+let holdTimeout = null;
+let doubleTimeout = null;
 let autoNextTimeout = null;
 let startTime = 0;
 
-// UI Elements
-const gameArea = document.getElementById('game-area');
-const targetStatusText = document.getElementById('target-status-text');
-const mainBtn = document.getElementById('main-btn');
-const statusPanel = document.getElementById('status-panel');
-const levelDisplay = document.getElementById('level-display');
-const threatDisplay = document.getElementById('threat-display');
-const bestScoreEl = document.getElementById('best-score');
-const lastScoreEl = document.getElementById('last-score');
-const streakCounterEl = document.getElementById('streak-counter');
-const resultDisplay = document.getElementById('result-display');
-const resultTimeEl = document.getElementById('result-time');
-const resultRankEl = document.getElementById('result-rank');
-const flashOverlay = document.getElementById('flash-overlay');
-const difficultyContainer = document.getElementById('difficulty-selector-container');
-const diffBtns = document.querySelectorAll('.diff-btn');
-const clickLayer = document.getElementById('click-layer');
+let queuedAttack = null;
+let speedModifier = 1.0;
+let speedModRounds = 0;
 
-// Wait Phase Sound Interval
-let beepInterval = null;
+let doublePending = false;
+let holdActive = false;
 
-// Audio Context
+let globalSeed = Math.floor(Math.random() * 1000000);
+
+// --- SEEDED RANDOM ---
+function seededRandom() {
+  let t = globalSeed += 0x6D2B79F5;
+  t = Math.imul(t ^ (t >>> 15), t | 1);
+  t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
+  return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+}
+
+// --- DOM ELEMENTS ---
+const screens = {
+  menu: document.getElementById('screen-menu'),
+  lobby: document.getElementById('screen-lobby'),
+  game: document.getElementById('screen-game')
+};
+
+const UI = {
+  gameArea: document.getElementById('game-area'),
+  targetStatus: document.getElementById('target-status-text'),
+  mainBtn: document.getElementById('main-btn'),
+  statusPanel: document.getElementById('status-panel'),
+  levelDisplay: document.getElementById('level-display'),
+  threatDisplay: document.getElementById('threat-display'),
+  bestScore: document.getElementById('best-score'),
+  lastScore: document.getElementById('last-score'),
+  streakCounter: document.getElementById('streak-counter'),
+  resultDisplay: document.getElementById('result-display'),
+  resultTime: document.getElementById('result-time'),
+  resultRank: document.getElementById('result-rank'),
+  flashOverlay: document.getElementById('flash-overlay'),
+  diffContainer: document.getElementById('difficulty-selector-container'),
+  diffBtns: document.querySelectorAll('.diff-btn'),
+  clickLayer: document.getElementById('click-layer'),
+  holdProgress: document.getElementById('hold-progress'),
+  modeBadge: document.getElementById('mode-badge'),
+  btnQuit: document.getElementById('btn-quit'),
+  centerAlerts: document.getElementById('center-alert-container'),
+  bestContainer: document.getElementById('best-stat-container')
+};
+
+// Online UI
+const Lobby = {
+  btnOffline: document.getElementById('btn-offline'),
+  btnOnline: document.getElementById('btn-online'),
+  btnCreate: document.getElementById('btn-create-room'),
+  btnJoin: document.getElementById('btn-join-room'),
+  roomInput: document.getElementById('room-code-input'),
+  error: document.getElementById('lobby-error'),
+  selection: document.getElementById('lobby-selection'),
+  info: document.getElementById('room-info'),
+  codeDisplay: document.getElementById('display-room-code'),
+  p1Slot: document.getElementById('p1-slot'),
+  p2Slot: document.getElementById('p2-slot'),
+  btnReady: document.getElementById('btn-ready'),
+  btnLeave: document.getElementById('btn-leave-lobby'),
+  countdown: document.getElementById('countdown-text')
+};
+
+const OppUI = {
+  container: document.getElementById('opp-stats'),
+  streak: document.getElementById('opp-streak-counter'),
+  state: document.getElementById('opp-state-text')
+};
+
+// --- AUDIO ---
 const AudioContext = window.AudioContext || window.webkitAudioContext;
 let audioCtx;
 
@@ -73,7 +114,7 @@ function initAudio() {
   if (audioCtx.state === 'suspended') audioCtx.resume();
 }
 
-function playTone(freq, type, duration, vol=0.1) {
+function playTone(freq, type, duration, vol = 0.1) {
   if (!audioCtx) return;
   const osc = audioCtx.createOscillator();
   const gain = audioCtx.createGain();
@@ -87,61 +128,305 @@ function playTone(freq, type, duration, vol=0.1) {
   osc.stop(audioCtx.currentTime + duration);
 }
 
-function playLockOn() {
-  playTone(800, 'sine', 0.1, 0.05);
+function playLockOn() { playTone(800, 'sine', 0.1, 0.05); }
+function playFire() { playTone(200, 'square', 0.2, 0.2); playTone(150, 'sawtooth', 0.3, 0.2); }
+function playSuccess() { playTone(600, 'sine', 0.1, 0.1); setTimeout(() => playTone(800, 'sine', 0.3, 0.1), 100); }
+function playFail() { playTone(100, 'sawtooth', 0.5, 0.2); }
+let beepInterval = null;
+
+// --- NAVIGATION ---
+function showScreen(id) {
+  Object.values(screens).forEach(s => {
+    s.classList.remove('active');
+    s.classList.add('hidden');
+  });
+  document.getElementById(id).classList.remove('hidden');
+  document.getElementById(id).classList.add('active');
 }
 
-function playFire() {
-  playTone(200, 'square', 0.2, 0.2);
-  playTone(150, 'sawtooth', 0.3, 0.2);
+// --- FIREBASE INIT ---
+async function initFirebase() {
+  if (firebaseConfig.apiKey === "YOUR_API_KEY") {
+    alert("Firebase is not configured! Check script.js lines 1-10.");
+    return false;
+  }
+  if (!db) {
+    firebase.initializeApp(firebaseConfig);
+    auth = firebase.auth();
+    db = firebase.database();
+    try {
+      const cred = await auth.signInAnonymously();
+      authUser = cred.user;
+      return true;
+    } catch (e) {
+      console.error("Auth failed", e);
+      alert("Database authentication failed.");
+      return false;
+    }
+  }
+  return true;
 }
 
-function playSuccess() {
-  playTone(600, 'sine', 0.1, 0.1);
-  setTimeout(() => playTone(800, 'sine', 0.3, 0.1), 100);
+// --- LOBBY LOGIC ---
+function makeId(length) {
+  let result = '';
+  const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ';
+  for (let i = 0; i < length; i++) result += chars.charAt(Math.floor(Math.random() * chars.length));
+  return result;
 }
 
-function playFail() {
-  playTone(100, 'sawtooth', 0.5, 0.2);
+async function createRoom() {
+  if (!(await initFirebase())) return;
+  roomCode = makeId(4);
+  isHost = true;
+
+  roomRef = db.ref('rooms/' + roomCode);
+  await roomRef.set({
+    host: authUser.uid,
+    seed: Math.floor(Math.random() * 1000000),
+    state: 'lobby'
+  });
+
+  myPlayerRef = db.ref('rooms/' + roomCode + '/players/' + authUser.uid);
+  await myPlayerRef.set({ ready: false, streak: 0, alive: true });
+
+  setupRoomListeners();
+  showLobbyInfo();
 }
 
-// Game Logic
+async function joinRoom(code) {
+  if (!(await initFirebase())) return;
+  roomCode = code.toUpperCase();
+  isHost = false;
+
+  roomRef = db.ref('rooms/' + roomCode);
+  const snap = await roomRef.once('value');
+  if (!snap.exists()) {
+    Lobby.error.innerText = "Room not found.";
+    Lobby.error.classList.remove('hidden');
+    return;
+  }
+
+  myPlayerRef = db.ref('rooms/' + roomCode + '/players/' + authUser.uid);
+  await myPlayerRef.set({ ready: false, streak: 0, alive: true });
+
+  setupRoomListeners();
+  showLobbyInfo();
+}
+
+function showLobbyInfo() {
+  Lobby.selection.classList.add('hidden');
+  Lobby.info.classList.remove('hidden');
+  Lobby.codeDisplay.innerText = roomCode;
+}
+
+function setupRoomListeners() {
+  roomRef.on('value', snap => {
+    const data = snap.val();
+    if (!data) return; // Room closed
+
+    globalSeed = data.seed;
+
+    if (data.players) {
+      const players = Object.keys(data.players);
+      const myData = data.players[authUser.uid];
+      const oppId = players.find(id => id !== authUser.uid);
+      const oppData = oppId ? data.players[oppId] : null;
+
+      Lobby.p1Slot.innerHTML = `you: <span class="status ${myData?.ready ? 'ready' : ''}">${myData?.ready ? 'READY' : 'WAITING...'}</span>`;
+
+      if (oppData) {
+        Lobby.p2Slot.innerHTML = `opponent: <span class="status ${oppData.ready ? 'ready' : ''}">${oppData.ready ? 'READY' : 'WAITING...'}</span>`;
+        OppUI.streak.innerText = oppData.streak || 0;
+        OppUI.state.innerText = oppData.alive ? 'alive' : 'dead';
+        OppUI.state.style.color = oppData.alive ? 'var(--text-muted)' : 'var(--red)';
+
+        // Handle multiplayer progression events
+        if (data.state === 'playing') {
+          if (!oppData.alive && myData.alive && state !== 'RESULT') {
+            // opponent died, you're still alive
+            triggerCenterAlert("opponent died!");
+          }
+        }
+      } else {
+        Lobby.p2Slot.innerHTML = `opponent: <span class="status">waiting for join...</span>`;
+      }
+
+      if (players.length === 2 && !Lobby.btnReady.classList.contains('hidden') === false && data.state === 'lobby') {
+        Lobby.btnReady.classList.remove('hidden');
+      }
+
+      if (data.state === 'starting' && state !== 'WAIT' && state !== 'FIRE') {
+        startCountdown(data.countdownEnd);
+      }
+    }
+
+    // Attack Queueing logic
+    if (data.attackTarget === authUser.uid && data.attackId) {
+      handleReceivedAttack(data.attackType, data.attackId);
+    }
+  });
+}
+
+let lastAttackId = null;
+function handleReceivedAttack(type, attackId) {
+  if (attackId === lastAttackId) return;
+  lastAttackId = attackId;
+
+  triggerCenterAlert(`attacked: ${type}!`);
+  if (type === 'fake') queuedAttack = 'ignore';
+  if (type === 'shake') {
+    document.body.classList.add('screen-shake-small');
+    setTimeout(() => document.body.classList.remove('screen-shake-small'), 200);
+  }
+  if (type === 'speed') {
+    speedModifier = 0.75;
+    speedModRounds = 2;
+  }
+}
+
+function sendAttack(type) {
+  const oppId = Object.keys(roomRef.child('players')).find(id => id !== authUser.uid);
+  if (!roomRef) return;
+  roomRef.update({
+    attackTarget: oppId || 'all',
+    attackType: type,
+    attackId: Date.now()
+  });
+}
+
+function startCountdown(endTime) {
+  Lobby.btnReady.classList.add('hidden');
+  Lobby.countdown.classList.remove('hidden');
+
+  const iv = setInterval(() => {
+    const left = Math.ceil((endTime - Date.now()) / 1000);
+    if (left > 0) {
+      Lobby.countdown.innerText = left;
+    } else {
+      clearInterval(iv);
+      enterGameMode(true);
+    }
+  }, 100);
+}
+
+// --- MAIN GAME LOGIC ---
+function getLevelParams(idx) {
+  const baseLevels = [
+    { name: 'recruit', window: 1200, threat: 'too easy' },
+    { name: 'soldier', window: 1000, threat: 'mild' },
+    { name: 'veteran', window: 800, threat: 'getting warm' },
+    { name: 'elite', window: 650, threat: 'intense' },
+    { name: 'omega', window: 500, threat: 'lethal' }
+  ];
+
+  let actualLevel = idx + 1;
+  let params = { level: actualLevel };
+
+  if (idx < 5) {
+    params.name = baseLevels[idx].name;
+    params.window = baseLevels[idx].window;
+    params.threat = baseLevels[idx].threat;
+    params.pulseDur = 0.8 - (idx * 0.1);
+  } else {
+    let diff = idx - 4;
+    let pluses = '+'.repeat(Math.min(diff, 3));
+    params.name = 'omega' + pluses;
+    params.window = Math.max(180, 500 - (diff * 25));
+
+    if (actualLevel < 10) params.threat = 'lethal';
+    else if (actualLevel < 15) params.threat = 'terminal';
+    else params.threat = 'god-tier';
+
+    params.pulseDur = Math.max(0.1, 0.4 - (diff * 0.03));
+  }
+
+  // Apply speed pressure if active
+  if (speedModRounds > 0) {
+    params.window *= speedModifier;
+    params.threat += ' (sped up!)';
+  }
+
+  return params;
+}
+
+function getCommand(actualLevel) {
+  let rand = isOnline ? seededRandom() : Math.random();
+
+  // Online attacks force command
+  if (queuedAttack) {
+    let cmd = queuedAttack;
+    queuedAttack = null;
+    return cmd;
+  }
+
+  if (actualLevel < 3) return 'fire';
+  if (actualLevel < 6) {
+    if (rand < 0.15) return 'ignore';
+    if (rand < 0.3) return 'hold';
+    return 'fire';
+  }
+  // Deep endless mode
+  if (rand < 0.20) return 'ignore';
+  if (rand < 0.35) return 'double';
+  if (rand < 0.50) return 'hold';
+  return 'fire';
+}
+
 function resetUI() {
-  resultDisplay.classList.add('hidden');
+  UI.resultDisplay.classList.add('hidden');
   document.body.classList.remove('screen-shake');
-  
-  // ensure flash overlay is cleared
-  flashOverlay.className = '';
-  void flashOverlay.offsetWidth;
+  UI.flashOverlay.className = '';
+  void UI.flashOverlay.offsetWidth;
+  UI.holdProgress.style.width = '0';
+  UI.holdProgress.style.height = '0';
+}
+
+function updateFirebaseState(alive) {
+  if (isOnline && myPlayerRef) {
+    myPlayerRef.update({ alive, streak: streak });
+  }
+}
+
+function triggerCenterAlert(text) {
+  const el = document.createElement('div');
+  el.className = 'attack-alert';
+  el.innerText = text;
+  UI.centerAlerts.appendChild(el);
+  setTimeout(() => el.remove(), 2000);
 }
 
 function startGame() {
   if (autoNextTimeout) clearTimeout(autoNextTimeout);
   if (beepInterval) clearInterval(beepInterval);
   resetUI();
-  
+
+  holdActive = false;
+  doublePending = false;
+  currentCommand = getCommand(currentLevelIdx + 1);
+  updateFirebaseState(true);
+
   state = 'WAIT';
-  gameArea.className = 'state-wait';
-  targetStatusText.innerText = 'waiting...';
-  
-  statusPanel.innerText = 'wait for it';
-  statusPanel.style.color = 'var(--text-muted)';
-  
-  mainBtn.style.opacity = '0';
-  mainBtn.style.pointerEvents = 'none';
-  
+  UI.gameArea.className = 'state-wait';
+  UI.targetStatus.innerText = 'waiting...';
+
+  UI.statusPanel.innerText = 'wait for it';
+  UI.statusPanel.style.color = 'var(--text-muted)';
+
+  UI.mainBtn.style.opacity = '0';
+  UI.mainBtn.style.pointerEvents = 'none';
+
   const lvlParams = getLevelParams(currentLevelIdx);
-  difficultyContainer.style.opacity = '0.2';
-  difficultyContainer.style.pointerEvents = 'none';
-  
-  // Set pulse duration CSS variable
+  UI.diffContainer.style.opacity = '0.2';
+  UI.diffContainer.style.pointerEvents = 'none';
+
   document.documentElement.style.setProperty('--pulse-dur', `${lvlParams.pulseDur}s`);
 
-  // Delay logic scales with difficulty
-  const minDelay = Math.max(800, 1500 - (currentLevelIdx * 50)); 
-  const maxDelay = Math.min(6000, 3500 + (currentLevelIdx * 200));
-  const delay = Math.random() * (maxDelay - minDelay) + minDelay;
-  
+  let rng = isOnline ? seededRandom() : Math.random();
+  const minDelay = Math.max(600, 1500 - (currentLevelIdx * 50));
+  const maxDelay = Math.min(5000, 3500 + (currentLevelIdx * 100));
+  const delay = rng * (maxDelay - minDelay) + minDelay;
+
   beepInterval = setInterval(playLockOn, 500);
 
   waitTimeout = setTimeout(() => {
@@ -152,50 +437,80 @@ function startGame() {
 
 function firePhase() {
   state = 'FIRE';
-  gameArea.className = 'state-fire';
-  targetStatusText.innerText = 'click!';
-  
-  statusPanel.innerText = 'now!';
-  statusPanel.style.color = 'var(--green)';
-  
-  flashScreen('white');
-  playFire();
-  
+  UI.gameArea.className = `state-${currentCommand === 'ignore' ? 'ignore' : currentCommand === 'hold' ? 'hold' : currentCommand === 'double' ? 'double' : 'fire'}`;
+
+  UI.statusPanel.style.color = currentCommand === 'ignore' ? 'var(--text-muted)' : 'var(--green)';
+
+  if (currentCommand === 'fire') {
+    UI.targetStatus.innerText = 'click!';
+    UI.statusPanel.innerText = 'now!';
+    flashScreen('white'); playFire();
+  } else if (currentCommand === 'hold') {
+    UI.targetStatus.innerText = 'hold...';
+    UI.statusPanel.innerText = 'hold down';
+    flashScreen('white'); playFire();
+  } else if (currentCommand === 'double') {
+    UI.targetStatus.innerText = 'double!';
+    UI.statusPanel.innerText = 'click twice';
+    flashScreen('white'); playFire();
+  } else if (currentCommand === 'ignore') {
+    UI.targetStatus.innerText = 'ignore.';
+    UI.statusPanel.innerText = 'don\'t touch';
+    // Subtle cue
+  }
+
   startTime = performance.now();
-  
   const currentLevel = getLevelParams(currentLevelIdx);
-  fireTimeout = setTimeout(() => {
-    failGame('too slow.');
-  }, currentLevel.window);
+
+  if (currentCommand === 'ignore') {
+    fireTimeout = setTimeout(() => {
+      successGame(); // successfully ignored
+    }, 1000); // 1 second window to not mess up
+  } else {
+    let win = currentLevel.window;
+    if (currentCommand === 'double') win += 200; // a bit more time for 2 clicks
+    if (currentCommand === 'hold') win += 500; // must hold for 400ms at least, give buffer
+
+    fireTimeout = setTimeout(() => {
+      failGame('too slow.');
+    }, win);
+  }
 }
 
 function successGame() {
   const rt = Math.floor(performance.now() - startTime);
   clearTimeout(fireTimeout);
-  
+  if (holdTimeout) clearTimeout(holdTimeout);
+  holdActive = false; doublePending = false;
+
   state = 'RESULT';
-  gameArea.className = 'state-success';
-  targetStatusText.innerText = 'nice.';
-  
-  statusPanel.innerText = 'survived.';
-  statusPanel.style.color = 'var(--text-muted)';
-  
+  UI.gameArea.className = 'state-success';
+  UI.targetStatus.innerText = 'nice.';
+
+  UI.statusPanel.innerText = 'survived.';
+  UI.statusPanel.style.color = 'var(--text-muted)';
+
   playSuccess();
   streak++;
-  
-  // Level progression
-  if (streak % 1 === 0) {
-    currentLevelIdx++;
+  if (speedModRounds > 0) speedModRounds--;
+
+  // Online Attacks
+  if (isOnline) {
+    if (streak === 3) sendAttack('fake');
+    else if (streak === 5) sendAttack('shake');
+    else if (streak === 8) sendAttack('speed');
   }
 
-  updateSelectorUI();
+  if (streak % 1 === 0) currentLevelIdx++;
+  updateFirebaseState(true);
 
+  updateSelectorUI();
   updateBestScore(rt);
-  lastScoreEl.innerText = rt + 'ms';
-  
-  showResult(rt);
+  UI.lastScore.innerText = currentCommand === 'ignore' ? 'pass' : rt + 'ms';
+
+  showResult(rt, currentCommand === 'ignore' ? 'passed' : null);
   updateSidebar();
-  
+
   autoNextTimeout = setTimeout(() => {
     if (state === 'RESULT') startGame();
   }, 1200);
@@ -204,68 +519,79 @@ function successGame() {
 function failGame(reason) {
   clearTimeout(waitTimeout);
   clearTimeout(fireTimeout);
+  clearTimeout(holdTimeout);
+  clearTimeout(doubleTimeout);
   if (beepInterval) clearInterval(beepInterval);
-  
-  // Show selector again
-  difficultyContainer.style.opacity = '1';
-  difficultyContainer.style.pointerEvents = 'auto';
-  
+  holdActive = false; doublePending = false;
+  UI.holdProgress.style.width = '0'; UI.holdProgress.style.height = '0';
+
+  UI.diffContainer.style.opacity = '1';
+  UI.diffContainer.style.pointerEvents = 'auto';
+
   state = 'RESULT';
-  gameArea.className = 'state-start'; // Reset visuals roughly
+  UI.gameArea.className = 'state-start';
   document.body.classList.add('screen-shake');
-  
+
   flashScreen('red');
   playFail();
-  
-  targetStatusText.innerText = 'you died.';
-  
-  statusPanel.innerText = reason;
-  statusPanel.style.color = 'var(--red)';
-  
-  resultTimeEl.innerText = 'X';
-  resultTimeEl.style.color = 'var(--red)';
-  
-  resultRankEl.innerText = reason;
-  resultRankEl.className = 'rank-slow';
-  
-  resultDisplay.classList.remove('hidden');
-  
+
+  UI.targetStatus.innerText = 'you died.';
+  UI.statusPanel.innerText = reason;
+  UI.statusPanel.style.color = 'var(--red)';
+
+  UI.resultTime.innerText = 'X';
+  UI.resultTime.style.color = 'var(--red)';
+  UI.resultRank.innerText = reason;
+  UI.resultRank.className = 'rank-slow';
+
+  UI.resultDisplay.classList.remove('hidden');
+
   streak = 0;
-  // If we fail on a high level, drop back to the level we manually started at (or 1)
-  const activeBtn = Array.from(diffBtns).find(b => b.classList.contains('active'));
+  speedModRounds = 0;
+  speedModifier = 1.0;
+  const activeBtn = Array.from(UI.diffBtns).find(b => b.classList.contains('active'));
   currentLevelIdx = activeBtn ? parseInt(activeBtn.dataset.level) - 1 : 0;
-  
+
+  updateFirebaseState(false);
   updateSelectorUI();
   updateSidebar();
-  
-  mainBtn.style.opacity = '1';
-  mainBtn.style.pointerEvents = 'auto';
-  mainBtn.innerText = 'try again';
+
+  UI.mainBtn.style.opacity = '1';
+  UI.mainBtn.style.pointerEvents = 'auto';
+  UI.mainBtn.innerText = isOnline ? 'wait for next' : 'try again';
+
+  // In online mode, we just stay dead and watch opponent's streak update, or leave room
 }
 
-function showResult(rt) {
-  resultTimeEl.innerText = rt + 'ms';
-  resultTimeEl.style.color = 'var(--text-main)';
-  
-  let rank = '';
-  let rankClass = '';
-  if (rt < 150) { rank = 'godlike'; rankClass = 'rank-godlike'; }
-  else if (rt < 200) { rank = 'elite'; rankClass = 'rank-elite'; }
-  else if (rt < 250) { rank = 'sharp'; rankClass = 'rank-sharp'; }
-  else { rank = 'slow'; rankClass = 'rank-slow'; }
-  
-  resultRankEl.innerText = rank;
-  resultRankEl.className = rankClass;
-  resultDisplay.classList.remove('hidden');
+function showResult(rt, overrideRank) {
+  if (overrideRank) {
+    UI.resultTime.innerText = overrideRank;
+    UI.resultRank.innerText = '';
+  } else {
+    UI.resultTime.innerText = rt + 'ms';
+    UI.resultTime.style.color = 'var(--text-main)';
+
+    let rank = ''; let rankClass = '';
+    if (rt < 150) { rank = 'godlike'; rankClass = 'rank-godlike'; }
+    else if (rt < 200) { rank = 'elite'; rankClass = 'rank-elite'; }
+    else if (rt < 250) { rank = 'sharp'; rankClass = 'rank-sharp'; }
+    else { rank = 'slow'; rankClass = 'rank-slow'; }
+
+    UI.resultRank.innerText = rank;
+    UI.resultRank.className = rankClass;
+  }
+  UI.resultDisplay.classList.remove('hidden');
 }
 
 function flashScreen(color) {
-  flashOverlay.className = '';
-  void flashOverlay.offsetWidth; // trigger reflow
-  flashOverlay.className = color === 'white' ? 'flash-white' : 'flash-red';
+  UI.flashOverlay.className = '';
+  void UI.flashOverlay.offsetWidth;
+  UI.flashOverlay.className = color === 'white' ? 'flash-white' : 'flash-red';
 }
 
 function updateBestScore(rt) {
+  // don't track ignore rounds for best time
+  if (currentCommand === 'ignore') return;
   if (!bestScore || rt < bestScore) {
     bestScore = rt;
     localStorage.setItem('cod_best_score', bestScore);
@@ -274,75 +600,161 @@ function updateBestScore(rt) {
 
 function updateSidebar() {
   const lvlParams = getLevelParams(currentLevelIdx);
-  levelDisplay.innerText = `level ${lvlParams.level} // ${lvlParams.name}`;
-  threatDisplay.innerText = lvlParams.threat;
-  
-  if (bestScore) bestScoreEl.innerText = bestScore + 'ms';
-  streakCounterEl.innerText = streak;
+  UI.levelDisplay.innerText = `level ${lvlParams.level} // ${lvlParams.name}`;
+  UI.threatDisplay.innerText = lvlParams.threat;
+
+  if (bestScore) UI.bestScore.innerText = bestScore + 'ms';
+  UI.streakCounter.innerText = streak;
 }
 
 function updateSelectorUI() {
-  diffBtns.forEach(btn => btn.classList.remove('active'));
+  UI.diffBtns.forEach(btn => btn.classList.remove('active'));
   if (currentLevelIdx < 5) {
-    const activeBtn = Array.from(diffBtns).find(b => parseInt(b.dataset.level) === (currentLevelIdx + 1));
+    const activeBtn = Array.from(UI.diffBtns).find(b => parseInt(b.dataset.level) === (currentLevelIdx + 1));
     if (activeBtn) activeBtn.classList.add('active');
   }
 }
 
-// Event Listeners
-diffBtns.forEach(btn => {
-  const handler = (e) => {
-    e.stopPropagation();
-    if (state !== 'START' && state !== 'RESULT') return;
-    
-    currentLevelIdx = parseInt(e.target.dataset.level) - 1;
-    streak = 0; 
-    updateSelectorUI();
-    updateSidebar();
-    
-    // reset button text 
-    if (state === 'RESULT') {
-        gameArea.className = 'state-start';
-        targetStatusText.innerText = 'one miss and it ends.';
-        resultDisplay.classList.add('hidden');
-        mainBtn.innerText = 'play';
-        statusPanel.innerText = 'ready.';
-        statusPanel.style.color = 'var(--text-muted)';
-        state = 'START';
-    }
-  };
-  btn.addEventListener('mousedown', handler);
-  btn.addEventListener('touchstart', handler);
-});
+function enterGameMode(online) {
+  isOnline = online;
+  showScreen('screen-game');
+  UI.modeBadge.innerText = isOnline ? 'online versus' : 'offline mode';
 
-function handleGameInteraction() {
-  initAudio();
-  if (state === 'START' || state === 'RESULT') {
+  if (isOnline) {
+    document.getElementById('opp-stats').classList.remove('hidden');
+    UI.bestContainer.classList.add('hidden'); // Hide best score in online
+    UI.diffContainer.classList.add('hidden'); // No difficulty selector in online, synced by seed
+    currentLevelIdx = 0; // Online always starts at level 1 for fairness
+    UI.btnQuit.classList.remove('hidden');
+    UI.mainBtn.classList.add('hidden'); // Started automatically
     startGame();
-  } else if (state === 'WAIT') {
-    failGame('too early.');
-  } else if (state === 'FIRE') {
-    successGame();
+  } else {
+    document.getElementById('opp-stats').classList.add('hidden');
+    UI.bestContainer.classList.remove('hidden');
+    UI.diffContainer.classList.remove('hidden');
+    UI.btnQuit.classList.remove('hidden');
+    UI.mainBtn.classList.remove('hidden');
+    state = 'START';
+    resetUI();
+    updateSidebar();
   }
 }
 
-// Global click layer for the game interaction
-clickLayer.addEventListener('mousedown', handleGameInteraction);
-clickLayer.addEventListener('touchstart', (e) => {
-    e.preventDefault(); 
-    handleGameInteraction();
-}, {passive: false});
+// --- INPUT EVENT LOGIC ---
 
-// hook main btn too
-mainBtn.addEventListener('mousedown', (e) => {
+function handleInputDown() {
+  initAudio();
+  if (state === 'START' || state === 'RESULT') {
+    if (!isOnline) startGame();
+  } else if (state === 'WAIT') {
+    failGame('too early.');
+  } else if (state === 'FIRE') {
+    if (currentCommand === 'ignore') {
+      failGame('bamboozled.');
+    } else if (currentCommand === 'fire') {
+      successGame();
+    } else if (currentCommand === 'double') {
+      if (!doublePending) {
+        doublePending = true;
+        clearTimeout(fireTimeout); // clear original timeout
+        doubleTimeout = setTimeout(() => failGame('too slow.'), 350); // tight double click window
+      } else {
+        clearTimeout(doubleTimeout);
+        successGame();
+      }
+    } else if (currentCommand === 'hold') {
+      holdActive = true;
+      UI.holdProgress.style.width = '150px';
+      UI.holdProgress.style.height = '150px';
+      // Ensure they hold for 400ms
+      holdTimeout = setTimeout(() => {
+        if (holdActive) successGame();
+      }, 400);
+    }
+  }
+}
+
+function handleInputUp() {
+  if (state === 'FIRE' && currentCommand === 'hold' && holdActive) {
+    holdActive = false;
+    UI.holdProgress.style.width = '0';
+    UI.holdProgress.style.height = '0';
+    clearTimeout(holdTimeout);
+    // if they lift mouse before 400ms is up via successGame triggering
+    if (state !== 'RESULT') {
+      failGame('held too short.');
+    }
+  }
+}
+
+// --- LISTENERS END SETUP ---
+
+UI.clickLayer.addEventListener('mousedown', handleInputDown);
+UI.clickLayer.addEventListener('touchstart', (e) => { e.preventDefault(); handleInputDown(); }, { passive: false });
+
+document.addEventListener('mouseup', handleInputUp);
+document.addEventListener('touchend', handleInputUp);
+
+UI.mainBtn.addEventListener('mousedown', (e) => { e.stopPropagation(); handleInputDown(); });
+UI.mainBtn.addEventListener('touchstart', (e) => { e.stopPropagation(); e.preventDefault(); handleInputDown(); });
+
+UI.diffBtns.forEach(btn => {
+  const handler = (e) => {
     e.stopPropagation();
-    handleGameInteraction();
-});
-mainBtn.addEventListener('touchstart', (e) => {
-    e.stopPropagation();
-    e.preventDefault();
-    handleGameInteraction();
+    if (state !== 'START' && state !== 'RESULT') return;
+    currentLevelIdx = parseInt(e.target.dataset.level) - 1;
+    streak = 0; updateSelectorUI(); updateSidebar();
+    if (state === 'RESULT') {
+      UI.gameArea.className = 'state-start';
+      UI.targetStatus.innerText = 'one miss and it ends.';
+      UI.resultDisplay.classList.add('hidden');
+      UI.mainBtn.innerText = 'play';
+      UI.statusPanel.innerText = 'ready.';
+      UI.statusPanel.style.color = 'var(--text-muted)';
+      state = 'START';
+    }
+  };
+  btn.addEventListener('mousedown', handler); btn.addEventListener('touchstart', handler);
 });
 
-// Setup Initial UI
+// Menu Listeners
+Lobby.btnOffline.addEventListener('click', () => enterGameMode(false));
+Lobby.btnOnline.addEventListener('click', () => showScreen('screen-lobby'));
+
+Lobby.btnCreate.addEventListener('click', createRoom);
+Lobby.btnJoin.addEventListener('click', () => {
+  const code = Lobby.roomInput.value.trim();
+  if (code.length === 4) joinRoom(code);
+});
+
+Lobby.btnReady.addEventListener('click', () => {
+  if (myPlayerRef) myPlayerRef.update({ ready: true });
+  if (isHost && roomRef) {
+    roomRef.once('value').then(snap => {
+      const players = snap.val().players;
+      const allReady = Object.values(players).every(p => p.ready);
+      if (Object.keys(players).length === 2 && allReady) {
+        roomRef.update({
+          state: 'starting',
+          countdownEnd: Date.now() + 3000
+        });
+      }
+    });
+  }
+});
+
+Lobby.btnLeave.addEventListener('click', () => {
+  if (myPlayerRef) myPlayerRef.remove();
+  showScreen('screen-menu');
+});
+
+UI.btnQuit.addEventListener('click', () => {
+  if (myPlayerRef) myPlayerRef.remove();
+  clearTimeout(autoNextTimeout);
+  clearTimeout(waitTimeout);
+  clearTimeout(fireTimeout);
+  showScreen('screen-menu');
+});
+
+// INITIALIZE
 updateSidebar();
