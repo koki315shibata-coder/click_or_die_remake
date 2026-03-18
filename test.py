@@ -1,0 +1,5 @@
+with open("script.js") as f: js = f.read()
+if "tw.addEventListener" in js: print("tw bound OK")
+else: print("tw NOT bound")
+if "target-wrapper" in js: print("target-wrapper OK")
+else: print("target-wrapper MISSING")

@@ -38,11 +38,6 @@ let resultStartTime = 0;
 let feedbackTimeout = null;
 
 function getModifier(level) {
-  let rand = isOnline ? seededRandom() : Math.random();
-  if (level < 2) return 'normal';
-  if (rand < 0.15) return 'shield';
-  if (rand < 0.30) return 'steal';
-  if (rand < 0.45) return 'chaos';
   return 'normal';
 }
 let bestScore = localStorage.getItem('cod_best_score') || null;
@@ -442,25 +437,6 @@ function getLevelParams(idx) {
 }
 
 function getCommand(actualLevel) {
-  let rand = isOnline ? seededRandom() : Math.random();
-
-  // Online attacks force command
-  if (queuedAttack) {
-    let cmd = queuedAttack;
-    queuedAttack = null;
-    return cmd;
-  }
-
-  if (actualLevel < 3) return 'fire';
-  if (actualLevel < 6) {
-    if (rand < 0.15) return 'ignore';
-    if (rand < 0.3) return 'hold';
-    return 'fire';
-  }
-  // Deep endless mode
-  if (rand < 0.20) return 'ignore';
-  if (rand < 0.35) return 'double';
-  if (rand < 0.50) return 'hold';
   return 'fire';
 }
 
@@ -498,12 +474,8 @@ function clearAllTimers() {
 function startGame() {
   clearAllTimers();
   resetUI();
-  wipeTargets();
+  clearTemporaryFeedback();
 
-  holdActive = false;
-  doublePending = false;
-  currentCommand = getCommand(currentLevelIdx + 1);
-  currentModifier = getModifier(currentLevelIdx + 1);
   updateFirebaseState(true);
 
   if (isOnline && isHost && roomRef) {
@@ -665,27 +637,11 @@ function spawnDecoys(count, level) {
 
 function firePhase() {
   state = 'FIRE';
-  UI.gameArea.className = `state-${currentCommand === 'ignore' ? 'ignore' : currentCommand === 'hold' ? 'hold' : currentCommand === 'double' ? 'double' : 'fire'}`;
-
-  UI.statusPanel.style.color = currentCommand === 'ignore' ? 'var(--text-muted)' : 'var(--green)';
-
-  if (currentCommand === 'fire') {
-    UI.targetStatus.innerText = 'click!';
-    UI.statusPanel.innerText = 'now!';
-    flashScreen('white'); playFire();
-  } else if (currentCommand === 'hold') {
-    UI.targetStatus.innerText = 'hold...';
-    UI.statusPanel.innerText = 'hold down';
-    flashScreen('white'); playFire();
-  } else if (currentCommand === 'double') {
-    UI.targetStatus.innerText = 'double!';
-    UI.statusPanel.innerText = 'click twice';
-    flashScreen('white'); playFire();
-  } else if (currentCommand === 'ignore') {
-    UI.targetStatus.innerText = 'ignore.';
-    UI.statusPanel.innerText = 'don\'t touch';
-  // Subtle cue
-  }
+  UI.gameArea.className = 'state-fire';
+  UI.statusPanel.style.color = 'var(--green)';
+  UI.targetStatus.innerText = 'click!';
+  UI.statusPanel.innerText = 'now!';
+  flashScreen('white'); playFire();
 
   startTime = performance.now();
   const currentLevel = getLevelParams(currentLevelIdx);
@@ -693,34 +649,17 @@ function firePhase() {
   activeTarget = {
     id: Date.now() + Math.random(),
     spawnedAt: performance.now(),
-    allowedTime: 1000, 
+    allowedTime: currentLevel.window + 80,
     resolved: false
   };
   const tid = activeTarget.id;
 
-  if (currentCommand === 'ignore') {
-    activeTarget.allowedTime = 1000;
-    fireTimeout = setTimeout(() => {
-      if (activeTarget.id === tid && !activeTarget.resolved) {
-        activeTarget.resolved = true;
-        grantScore(null, 500, 2, 'PASS');
-        successGame(); 
-      }
-    }, activeTarget.allowedTime); 
-  } else {
-    let win = currentLevel.window;
-    if (currentCommand === 'double') win += 200; 
-    if (currentCommand === 'hold') win += 500; 
-
-    activeTarget.allowedTime = win + 80;
-
-    fireTimeout = setTimeout(() => {
-      if (activeTarget.id === tid && !activeTarget.resolved) {
-        activeTarget.resolved = true;
-        failGame('too slow.');
-      }
-    }, activeTarget.allowedTime);
-  }
+  fireTimeout = setTimeout(() => {
+    if (activeTarget.id === tid && !activeTarget.resolved) {
+      activeTarget.resolved = true;
+      failGame('too slow.');
+    }
+  }, activeTarget.allowedTime);
 }
 
 function successGame() {
@@ -766,9 +705,9 @@ function successGame() {
 
   updateSelectorUI();
   updateBestScore();
-  UI.lastScore.innerText = currentCommand === 'ignore' ? 'pass' : rt + 'ms';
+  UI.lastScore.innerText = rt + 'ms';
 
-  showResult(rt, currentCommand === 'ignore' ? 'passed' : null);
+  showResult(rt, null);
   updateSidebar();
 
   autoNextTimeout = setTimeout(() => {
@@ -839,17 +778,15 @@ function grantScore(e, elapsed, basePoints, typeText) {
 }
 
 function resetGameState() {
-  clearAllTimers();
+  clearAllTimers(); 
   activeTarget.resolved = true;
-  holdActive = false; doublePending = false;
-  hasShield = false;
   streak = 0;
   score = 0;
   speedModRounds = 0;
   speedModifier = 1.0;
   const activeBtn = Array.from(UI.diffBtns).find(b => b.classList.contains('active'));
   currentLevelIdx = activeBtn ? parseInt(activeBtn.dataset.level) - 1 : 0;
-  wipeTargets();
+  clearTemporaryFeedback();
 }
 
 function winGame(reason) {
@@ -879,21 +816,6 @@ function winGame(reason) {
 }
 
 function failGame(reason) {
-  if (hasShield) {
-    hasShield = false;
-    clearAllTimers();
-    document.body.classList.remove('screen-shake-small');
-    UI.modeBadge.innerText = isOnline ? 'online versus' : 'offline mode';
-    
-    triggerCenterAlert('shield broken!');
-    spawnFloatingText(null, 'SAVED!', '#ffd700');
-    
-    autoNextTimeout = setTimeout(() => {
-      startGame();
-    }, 1000);
-    return;
-  }
-
   resetGameState();
 
   UI.diffContainer.style.opacity = '1';
@@ -1074,60 +996,13 @@ function handleInputDown(e) {
 
     const elapsed = performance.now() - activeTarget.spawnedAt;
 
-    if (currentCommand === 'ignore') {
+    if (elapsed <= activeTarget.allowedTime) {
       activeTarget.resolved = true;
-      failGame('bamboozled.');
-    } else if (currentCommand === 'fire') {
-      if (elapsed <= activeTarget.allowedTime) {
-        activeTarget.resolved = true;
-        grantScore(e, elapsed, 1, 'HIT');
-        successGame();
-      } else {
-        activeTarget.resolved = true;
-        failGame('too slow.');
-      }
-    } else if (currentCommand === 'double') {
-      if (!doublePending) {
-        doublePending = true;
-        clearTimeout(fireTimeout); 
-        doubleTimeout = setTimeout(() => {
-           if (!activeTarget.resolved) {
-              activeTarget.resolved = true;
-              failGame('too slow.');
-           }
-        }, 350); 
-      } else {
-        clearTimeout(doubleTimeout);
-        if (elapsed <= activeTarget.allowedTime + 350) {
-          activeTarget.resolved = true;
-          grantScore(e, elapsed, 2, 'DOUBLE');
-          successGame();
-        } else {
-          activeTarget.resolved = true;
-          failGame('too slow.');
-        }
-      }
-    } else if (currentCommand === 'hold') {
-      holdActive = true;
-      holdTimeout = setTimeout(() => {
-        if (holdActive && !activeTarget.resolved) {
-          activeTarget.resolved = true;
-          grantScore(e, elapsed, 3, 'HELD');
-          successGame();
-        }
-      }, 400);
-    }
-  }
-}
-
-function handleInputUp() {
-  if (state === 'FIRE' && currentCommand === 'hold' && holdActive) {
-    holdActive = false;
-    clearTimeout(holdTimeout);
-    
-    if (!activeTarget.resolved) {
+      grantScore(e, elapsed, 1, 'HIT');
+      successGame();
+    } else {
       activeTarget.resolved = true;
-      failGame('held too short.');
+      failGame('too slow.');
     }
   }
 }
@@ -1140,9 +1015,6 @@ tw.addEventListener('touchstart', handleInputDown, { passive: false });
 
 UI.clickLayer.addEventListener('mousedown', handleBackgroundClick);
 UI.clickLayer.addEventListener('touchstart', handleBackgroundClick, { passive: false });
-
-document.addEventListener('mouseup', handleInputUp);
-document.addEventListener('touchend', handleInputUp);
 
 UI.mainBtn.addEventListener('mousedown', handleInputDown);
 UI.mainBtn.addEventListener('touchstart', handleInputDown, { passive: false });
