@@ -253,8 +253,7 @@ function setupRoomListeners() {
         // Handle multiplayer progression events
         if (data.state === 'playing') {
           if (!oppData.alive && myData.alive && state !== 'RESULT') {
-            // opponent died, you're still alive
-            triggerCenterAlert("opponent died!");
+            winGame("opponent eliminated.");
           }
         }
       } else {
@@ -525,6 +524,20 @@ function spawnFloatingText(e, text, color) {
   setTimeout(() => el.remove(), 1000);
 }
 
+function getRandomPos(level) {
+  const tSize = 100;
+  const maxW = window.innerWidth - tSize;
+  const maxH = window.innerHeight - tSize - 100;
+  
+  const spreadX = Math.min(maxW / 2, level * 40);
+  const spreadY = Math.min(maxH / 2, level * 40);
+  
+  const x = (seededRandom() * spreadX * 2) - spreadX;
+  const y = (seededRandom() * spreadY * 2) - spreadY;
+  
+  return {x, y};
+}
+
 function spawnDecoys(count, level) {
   for(let i=0; i<count; i++) {
     const decoy = document.createElement('div');
@@ -532,22 +545,18 @@ function spawnDecoys(count, level) {
     if (seededRandom() > 0.5) decoy.classList.add('danger-target');
     else decoy.classList.add('fake-target');
     
-    const spreadX = Math.min(window.innerWidth / 2 - 50, level * 40);
-    const spreadY = Math.min(window.innerHeight / 2 - 50, level * 40);
-    const x = (seededRandom() * spreadX * 2) - spreadX;
-    const y = (seededRandom() * spreadY * 2) - spreadY;
+    const p1 = getRandomPos(level);
+    const p2 = getRandomPos(level);
     
-    decoy.style.transform = `translate(calc(-50% + ${x}px), calc(-50% + ${y}px))`;
+    decoy.style.transform = `translate(calc(-50% + ${p1.x}px), calc(-50% + ${p1.y}px))`;
     UI.gameArea.appendChild(decoy);
     
-    const driftX = x + (seededRandom() * 150 - 75) * (level * 0.3);
-    const driftY = y + (seededRandom() * 150 - 75) * (level * 0.3);
-    const driftDur = Math.max(0.5, 3 - level * 0.15);
+    const driftDur = Math.max(1.0, 3 - level * 0.15);
     
     requestAnimationFrame(() => {
       requestAnimationFrame(() => {
         decoy.style.transition = `transform ${driftDur}s linear`;
-        decoy.style.transform = `translate(calc(-50% + ${driftX}px), calc(-50% + ${driftY}px))`;
+        decoy.style.transform = `translate(calc(-50% + ${p2.x}px), calc(-50% + ${p2.y}px))`;
       });
     });
     
@@ -587,22 +596,18 @@ function firePhase() {
 
   const tw = document.getElementById('target-wrapper');
   if (currentLevelIdx >= 1) {
-    const spreadX = Math.min(window.innerWidth / 2 - 100, currentLevelIdx * 30);
-    const spreadY = Math.min(window.innerHeight / 2 - 100, currentLevelIdx * 30);
-    const x = (seededRandom() * spreadX * 2) - spreadX;
-    const y = (seededRandom() * spreadY * 2) - spreadY;
+    const p1 = getRandomPos(currentLevelIdx);
+    const p2 = getRandomPos(currentLevelIdx);
     
     tw.style.transition = 'none';
-    tw.style.transform = `translate(calc(-50% + ${x}px), calc(-50% + ${y}px))`;
+    tw.style.transform = `translate(calc(-50% + ${p1.x}px), calc(-50% + ${p1.y}px))`;
     
-    const driftX = x + (seededRandom() * 150 - 75) * (currentLevelIdx * 0.2);
-    const driftY = y + (seededRandom() * 150 - 75) * (currentLevelIdx * 0.2);
-    const driftDur = Math.max(0.5, 3 - currentLevelIdx * 0.1);
+    const driftDur = Math.max(1.0, 3 - currentLevelIdx * 0.1);
     
     requestAnimationFrame(() => {
       requestAnimationFrame(() => {
         tw.style.transition = `transform ${driftDur}s linear`;
-        tw.style.transform = `translate(calc(-50% + ${driftX}px), calc(-50% + ${driftY}px))`;
+        tw.style.transform = `translate(calc(-50% + ${p2.x}px), calc(-50% + ${p2.y}px))`;
       });
     });
   }
@@ -692,6 +697,37 @@ function resetGameState() {
   }
 }
 
+function winGame(reason) {
+  resetGameState();
+  UI.diffContainer.style.opacity = '1';
+  UI.diffContainer.style.pointerEvents = 'auto';
+
+  state = 'RESULT';
+  UI.gameArea.className = 'state-success';
+
+  flashScreen('white');
+  playSuccess();
+
+  UI.targetStatus.innerText = 'victory.';
+  UI.statusPanel.innerText = reason;
+  UI.statusPanel.style.color = 'var(--text-main)';
+
+  UI.resultTime.innerText = 'WIN';
+  UI.resultTime.style.color = 'var(--green)';
+  UI.resultRank.innerText = 'survivor';
+  UI.resultRank.className = 'rank-godlike';
+
+  UI.resultDisplay.classList.remove('hidden');
+
+  updateFirebaseState(true);
+  updateSelectorUI();
+  updateSidebar();
+
+  UI.mainBtn.style.opacity = '1';
+  UI.mainBtn.style.pointerEvents = 'auto';
+  UI.mainBtn.innerText = 'return to lobby';
+}
+
 function failGame(reason) {
   resetGameState();
 
@@ -722,9 +758,7 @@ function failGame(reason) {
 
   UI.mainBtn.style.opacity = '1';
   UI.mainBtn.style.pointerEvents = 'auto';
-  UI.mainBtn.innerText = isOnline ? 'wait for next' : 'REMATCH';
-
-  // In online mode, we just stay dead and watch opponent's streak update, or leave room
+  UI.mainBtn.innerText = isOnline ? 'return to lobby' : 'REMATCH';
 }
 
 function showResult(rt, overrideRank) {
@@ -812,7 +846,16 @@ function handleBackgroundClick(e) {
   }
   initAudio();
   if (state === 'START' || state === 'RESULT') {
-    if (!isOnline) startGame();
+    if (!isOnline) {
+      startGame();
+    } else {
+      if (myPlayerRef) update(myPlayerRef, { ready: false, alive: true, streak: 0 });
+      if (isHost && roomRef) update(roomRef, { state: 'lobby', gameStarted: false });
+      showLobbyInfo();
+      showScreen('screen-lobby');
+      state = 'START';
+      resetGameState(); 
+    }
   } else if (state === 'WAIT') {
     failGame('too early.');
   } else if (state === 'FIRE') {
@@ -827,7 +870,16 @@ function handleInputDown(e) {
   }
   initAudio();
   if (state === 'START' || state === 'RESULT') {
-    if (!isOnline) startGame();
+    if (!isOnline) {
+      startGame();
+    } else {
+      if (myPlayerRef) update(myPlayerRef, { ready: false, alive: true, streak: 0 });
+      if (isHost && roomRef) update(roomRef, { state: 'lobby', gameStarted: false });
+      showLobbyInfo();
+      showScreen('screen-lobby');
+      state = 'START';
+      resetGameState();
+    }
   } else if (state === 'WAIT') {
     failGame('too early.');
   } else if (state === 'FIRE') {
