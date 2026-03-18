@@ -474,7 +474,7 @@ function clearAllTimers() {
 function startGame() {
   clearAllTimers();
   resetUI();
-  clearTemporaryFeedback();
+  wipeTargets();
 
   updateFirebaseState(true);
 
@@ -551,24 +551,16 @@ function startWaitPhase() {
     tw.style.transform = `translate(-50%, -50%)`;
   }
 
-  if (currentLevelIdx >= 2 || currentModifier === 'chaos') {
-    let decoyCount = Math.min(5, Math.floor(currentLevelIdx / 2));
-    if (currentModifier === 'chaos') decoyCount += 3;
+  if (currentLevelIdx >= 1) {
+    let decoyCount = Math.min(6, currentLevelIdx + 1);
     spawnDecoys(decoyCount, currentLevelIdx);
   }
   // --------------------------------
 
-  let rng = isOnline ? seededRandom() : Math.random();
-  const minDelay = Math.max(600, 1500 - (currentLevelIdx * 50));
-  const maxDelay = Math.min(5000, 3500 + (currentLevelIdx * 100));
-  const delay = rng * (maxDelay - minDelay) + minDelay;
-
+  const delay = Math.random() * 300 + 200; // 200ms to 500ms
   targetFireTime = performance.now() + delay;
 
-  beepInterval = setInterval(playLockOn, 500);
-
   waitTimeout = setTimeout(() => {
-    clearInterval(beepInterval);
     firePhase();
   }, delay);
 }
@@ -606,9 +598,7 @@ function getRandomPos(level) {
 function spawnDecoys(count, level) {
   for(let i=0; i<count; i++) {
     const decoy = document.createElement('div');
-    decoy.className = 'decoy-target';
-    if (seededRandom() > 0.5) decoy.classList.add('danger-target');
-    else decoy.classList.add('fake-target');
+    decoy.className = 'fake-target';
     
     // Spawn in center and slide out during wait phase
     const p = getRandomPos(level);
@@ -619,20 +609,31 @@ function spawnDecoys(count, level) {
     
     void decoy.offsetWidth; // flush styles
 
-    decoy.style.transition = 'transform 0.4s ease-out';
+    decoy.style.transition = 'transform 0.2s ease-out';
     decoy.style.transform = `translate(calc(-50% + ${p.x}px), calc(-50% + ${p.y}px))`;
     
     const failHandler = (e) => {
       e.stopPropagation();
       if (e.cancelable) e.preventDefault();
-      if (state === 'FIRE' && !activeTarget.resolved) {
+      if (state === 'WAIT') {
+        failGame('too early.');
+      } else if (state === 'FIRE' && !activeTarget.resolved) {
         activeTarget.resolved = true;
-        failGame(decoy.classList.contains('danger-target') ? 'hit danger target.' : 'hit wrong target.');
+        failGame('hit fake target.');
       }
     };
     decoy.addEventListener('mousedown', failHandler);
     decoy.addEventListener('touchstart', failHandler, { passive: false });
   }
+}
+function wipeTargets() {
+  document.querySelectorAll('.decoy-target').forEach(el => el.remove());
+  const tw = document.getElementById('target-wrapper');
+  if (tw) {
+    tw.style.transition = 'none';
+    tw.style.transform = 'translate(-50%, -50%)';
+  }
+  clearTemporaryFeedback();
 }
 
 function firePhase() {
@@ -642,6 +643,10 @@ function firePhase() {
   UI.targetStatus.innerText = 'click!';
   UI.statusPanel.innerText = 'now!';
   flashScreen('white'); playFire();
+
+  document.querySelectorAll('.fake-target').forEach(el => {
+    el.classList.add('revealed');
+  });
 
   startTime = performance.now();
   const currentLevel = getLevelParams(currentLevelIdx);
@@ -786,7 +791,7 @@ function resetGameState() {
   speedModifier = 1.0;
   const activeBtn = Array.from(UI.diffBtns).find(b => b.classList.contains('active'));
   currentLevelIdx = activeBtn ? parseInt(activeBtn.dataset.level) - 1 : 0;
-  clearTemporaryFeedback();
+  wipeTargets();
 }
 
 function winGame(reason) {
