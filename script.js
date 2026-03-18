@@ -509,6 +509,58 @@ function startGame() {
   }, delay);
 }
 
+function spawnFloatingText(e, text, color) {
+  if (!e) return;
+  const el = document.createElement('div');
+  el.className = 'floating-text';
+  el.innerText = text;
+  el.style.color = color;
+  let x = window.innerWidth / 2;
+  let y = window.innerHeight / 2;
+  if (e.clientX !== undefined) { x = e.clientX; y = e.clientY; }
+  else if (e.touches && e.touches.length > 0) { x = e.touches[0].clientX; y = e.touches[0].clientY; }
+  el.style.left = x + 'px';
+  el.style.top = y + 'px';
+  document.body.appendChild(el);
+  setTimeout(() => el.remove(), 1000);
+}
+
+function spawnDecoys(count, level) {
+  for(let i=0; i<count; i++) {
+    const decoy = document.createElement('div');
+    decoy.className = 'decoy-target';
+    if (seededRandom() > 0.5) decoy.classList.add('danger-target');
+    else decoy.classList.add('fake-target');
+    
+    const spreadX = Math.min(window.innerWidth / 2 - 50, level * 40);
+    const spreadY = Math.min(window.innerHeight / 2 - 50, level * 40);
+    const x = (seededRandom() * spreadX * 2) - spreadX;
+    const y = (seededRandom() * spreadY * 2) - spreadY;
+    
+    decoy.style.transform = `translate(calc(-50% + ${x}px), calc(-50% + ${y}px))`;
+    UI.gameArea.appendChild(decoy);
+    
+    const driftX = x + (seededRandom() * 150 - 75) * (level * 0.3);
+    const driftY = y + (seededRandom() * 150 - 75) * (level * 0.3);
+    const driftDur = Math.max(0.5, 3 - level * 0.15);
+    
+    requestAnimationFrame(() => {
+      requestAnimationFrame(() => {
+        decoy.style.transition = `transform ${driftDur}s linear`;
+        decoy.style.transform = `translate(calc(-50% + ${driftX}px), calc(-50% + ${driftY}px))`;
+      });
+    });
+    
+    const failHandler = (e) => {
+      e.stopPropagation();
+      if (e.cancelable) e.preventDefault();
+      if (state === 'FIRE') failGame(decoy.classList.contains('danger-target') ? 'hit danger target.' : 'hit wrong target.');
+    };
+    decoy.addEventListener('mousedown', failHandler);
+    decoy.addEventListener('touchstart', failHandler, { passive: false });
+  }
+}
+
 function firePhase() {
   state = 'FIRE';
   UI.gameArea.className = `state-${currentCommand === 'ignore' ? 'ignore' : currentCommand === 'hold' ? 'hold' : currentCommand === 'double' ? 'double' : 'fire'}`;
@@ -531,6 +583,33 @@ function firePhase() {
     UI.targetStatus.innerText = 'ignore.';
     UI.statusPanel.innerText = 'don\'t touch';
     // Subtle cue
+  }
+
+  const tw = document.getElementById('target-wrapper');
+  if (currentLevelIdx >= 1) {
+    const spreadX = Math.min(window.innerWidth / 2 - 100, currentLevelIdx * 30);
+    const spreadY = Math.min(window.innerHeight / 2 - 100, currentLevelIdx * 30);
+    const x = (seededRandom() * spreadX * 2) - spreadX;
+    const y = (seededRandom() * spreadY * 2) - spreadY;
+    
+    tw.style.transition = 'none';
+    tw.style.transform = `translate(calc(-50% + ${x}px), calc(-50% + ${y}px))`;
+    
+    const driftX = x + (seededRandom() * 150 - 75) * (currentLevelIdx * 0.2);
+    const driftY = y + (seededRandom() * 150 - 75) * (currentLevelIdx * 0.2);
+    const driftDur = Math.max(0.5, 3 - currentLevelIdx * 0.1);
+    
+    requestAnimationFrame(() => {
+      requestAnimationFrame(() => {
+        tw.style.transition = `transform ${driftDur}s linear`;
+        tw.style.transform = `translate(calc(-50% + ${driftX}px), calc(-50% + ${driftY}px))`;
+      });
+    });
+  }
+
+  if (currentLevelIdx >= 2) {
+    const decoyCount = Math.min(5, Math.floor(currentLevelIdx / 2));
+    spawnDecoys(decoyCount, currentLevelIdx);
   }
 
   startTime = performance.now();
@@ -563,6 +642,11 @@ function successGame() {
 
   UI.statusPanel.innerText = 'survived.';
   UI.statusPanel.style.color = 'var(--text-muted)';
+
+  const streakEl = document.getElementById('streak-counter');
+  streakEl.classList.remove('score-pulse');
+  void streakEl.offsetWidth; 
+  streakEl.classList.add('score-pulse');
 
   playSuccess();
   streak++;
@@ -599,6 +683,13 @@ function resetGameState() {
   speedModifier = 1.0;
   const activeBtn = Array.from(UI.diffBtns).find(b => b.classList.contains('active'));
   currentLevelIdx = activeBtn ? parseInt(activeBtn.dataset.level) - 1 : 0;
+
+  document.querySelectorAll('.decoy-target').forEach(el => el.remove());
+  const tw = document.getElementById('target-wrapper');
+  if (tw) {
+    tw.style.transition = 'none';
+    tw.style.transform = 'translate(-50%, -50%)';
+  }
 }
 
 function failGame(reason) {
@@ -715,6 +806,20 @@ function enterGameMode(online) {
 
 // --- INPUT EVENT LOGIC ---
 
+function handleBackgroundClick(e) {
+  if (e) {
+    if (e.cancelable) e.preventDefault();
+  }
+  initAudio();
+  if (state === 'START' || state === 'RESULT') {
+    if (!isOnline) startGame();
+  } else if (state === 'WAIT') {
+    failGame('too early.');
+  } else if (state === 'FIRE') {
+    failGame('missed target.');
+  }
+}
+
 function handleInputDown(e) {
   if (e) {
     if (e.cancelable) e.preventDefault();
@@ -726,26 +831,36 @@ function handleInputDown(e) {
   } else if (state === 'WAIT') {
     failGame('too early.');
   } else if (state === 'FIRE') {
+    const targetOuter = document.getElementById('target-outer');
+    if (targetOuter) {
+      targetOuter.style.transform = 'scale(0.8)';
+      setTimeout(() => targetOuter.style.transform = '', 150);
+    }
+
     if (currentCommand === 'ignore') {
       failGame('bamboozled.');
     } else if (currentCommand === 'fire') {
+      spawnFloatingText(e, '+1', 'var(--green)');
       successGame();
     } else if (currentCommand === 'double') {
       if (!doublePending) {
         doublePending = true;
-        clearTimeout(fireTimeout); // clear original timeout
-        doubleTimeout = setTimeout(() => failGame('too slow.'), 350); // tight double click window
+        clearTimeout(fireTimeout); 
+        doubleTimeout = setTimeout(() => failGame('too slow.'), 350); 
       } else {
         clearTimeout(doubleTimeout);
+        spawnFloatingText(e, '+1', 'var(--green)');
         successGame();
       }
     } else if (currentCommand === 'hold') {
       holdActive = true;
       UI.holdProgress.style.width = '150px';
       UI.holdProgress.style.height = '150px';
-      // Ensure they hold for 400ms
       holdTimeout = setTimeout(() => {
-        if (holdActive) successGame();
+        if (holdActive) {
+          spawnFloatingText(e, '+1', 'var(--green)');
+          successGame();
+        }
       }, 400);
     }
   }
@@ -766,8 +881,12 @@ function handleInputUp() {
 
 // --- LISTENERS END SETUP ---
 
-UI.clickLayer.addEventListener('mousedown', handleInputDown);
-UI.clickLayer.addEventListener('touchstart', handleInputDown, { passive: false });
+const tw = document.getElementById('target-wrapper');
+tw.addEventListener('mousedown', handleInputDown);
+tw.addEventListener('touchstart', handleInputDown, { passive: false });
+
+UI.clickLayer.addEventListener('mousedown', handleBackgroundClick);
+UI.clickLayer.addEventListener('touchstart', handleBackgroundClick, { passive: false });
 
 document.addEventListener('mouseup', handleInputUp);
 document.addEventListener('touchend', handleInputUp);
