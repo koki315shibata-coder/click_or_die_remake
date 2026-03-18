@@ -468,8 +468,6 @@ function resetUI() {
   document.body.classList.remove('screen-shake');
   UI.flashOverlay.className = '';
   void UI.flashOverlay.offsetWidth;
-  UI.holdProgress.style.width = '0';
-  UI.holdProgress.style.height = '0';
 }
 
 function updateFirebaseState(alive) {
