@@ -87,15 +87,15 @@ const UI = {
   bestScore: document.getElementById('best-score'),
   lastScore: document.getElementById('last-score'),
   streakCounter: document.getElementById('streak-counter'),
+  modeBadge: document.getElementById('mode-badge'),
   resultDisplay: document.getElementById('result-display'),
   resultTime: document.getElementById('result-time'),
   resultRank: document.getElementById('result-rank'),
-  flashOverlay: document.getElementById('flash-overlay'),
-  diffContainer: document.getElementById('difficulty-selector-container'),
   diffBtns: document.querySelectorAll('.diff-btn'),
+  diffContainer: document.getElementById('difficulty-selector-container'),
+  bestContainer: document.getElementById('best-stat-container'),
+  flashOverlay: document.getElementById('flash-overlay'),
   clickLayer: document.getElementById('click-layer'),
-  holdProgress: document.getElementById('hold-progress'),
-  modeBadge: document.getElementById('mode-badge'),
   btnQuit: document.getElementById('btn-quit'),
   centerAlerts: document.getElementById('center-alert-container'),
   bestContainer: document.getElementById('best-stat-container')
@@ -814,7 +814,6 @@ function resetGameState() {
   activeTarget.resolved = true;
   holdActive = false; doublePending = false;
   hasShield = false;
-  UI.holdProgress.style.width = '0'; UI.holdProgress.style.height = '0';
   streak = 0;
   score = 0;
   speedModRounds = 0;
@@ -1054,10 +1053,10 @@ function handleInputDown(e) {
   if (state === 'FIRE') {
     if (activeTarget.resolved) return;
 
-    const targetOuter = document.getElementById('target-outer');
-    if (targetOuter) {
-      targetOuter.style.transform = 'scale(0.8)';
-      setTimeout(() => targetOuter.style.transform = '', 150);
+    const tgt = document.getElementById('main-target');
+    if (tgt) {
+      tgt.style.transform = 'scale(0.8)';
+      setTimeout(() => tgt.style.transform = '', 150);
     }
 
     const elapsed = performance.now() - activeTarget.spawnedAt;
@@ -1097,8 +1096,6 @@ function handleInputDown(e) {
       }
     } else if (currentCommand === 'hold') {
       holdActive = true;
-      UI.holdProgress.style.width = '150px';
-      UI.holdProgress.style.height = '150px';
       holdTimeout = setTimeout(() => {
         if (holdActive && !activeTarget.resolved) {
           activeTarget.resolved = true;
@@ -1113,8 +1110,6 @@ function handleInputDown(e) {
 function handleInputUp() {
   if (state === 'FIRE' && currentCommand === 'hold' && holdActive) {
     holdActive = false;
-    UI.holdProgress.style.width = '0';
-    UI.holdProgress.style.height = '0';
     clearTimeout(holdTimeout);
     
     if (!activeTarget.resolved) {
