@@ -37,6 +37,7 @@ body {
   z-index: 10;
 }
 .screen.hidden { display: none !important; }
+.hidden { display: none !important; }
 
 #screen-menu, #screen-lobby {
   align-items: center;
