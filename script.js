@@ -26,8 +26,20 @@ let roomRef = null;
 
 let state = 'START'; // START, WAIT, FIRE, RESULT
 let currentCommand = 'fire'; // fire, hold, double, ignore
+let currentModifier = 'normal'; // steal, shield, chaos
 let currentLevelIdx = 0;
 let streak = 0;
+let hasShield = false;
+let targetFireTime = 0;
+
+function getModifier(level) {
+  let rand = isOnline ? seededRandom() : Math.random();
+  if (level < 2) return 'normal';
+  if (rand < 0.15) return 'shield';
+  if (rand < 0.30) return 'steal';
+  if (rand < 0.45) return 'chaos';
+  return 'normal';
+}
 let bestScore = localStorage.getItem('cod_best_score') || null;
 
 let waitTimeout = null;
@@ -331,6 +343,20 @@ function handleReceivedAttack(type, attackId) {
   if (attackId === lastAttackId) return;
   lastAttackId = attackId;
 
+  if (type === 'steal') {
+    if (hasShield) {
+      hasShield = false;
+      triggerCenterAlert("shield blocked steal!");
+      UI.modeBadge.innerText = isOnline ? 'online versus' : 'offline mode';
+    } else {
+      streak = Math.max(0, streak - 1);
+      triggerCenterAlert("streak stolen!");
+      updateSidebar();
+      updateFirebaseState(true);
+    }
+    return;
+  }
+
   triggerCenterAlert(`attacked: ${type}!`);
   if (type === 'fake') queuedAttack = 'ignore';
   if (type === 'shake') {
@@ -473,6 +499,7 @@ function startGame() {
   holdActive = false;
   doublePending = false;
   currentCommand = getCommand(currentLevelIdx + 1);
+  currentModifier = getModifier(currentLevelIdx + 1);
   updateFirebaseState(true);
 
   if (isOnline && isHost && roomRef) {
@@ -483,8 +510,19 @@ function startGame() {
   UI.gameArea.className = 'state-wait';
   UI.targetStatus.innerText = 'waiting...';
 
-  UI.statusPanel.innerText = 'wait for it';
+  let modifierText = 'wait for it';
   UI.statusPanel.style.color = 'var(--text-muted)';
+  if (currentModifier === 'shield') {
+    modifierText = 'SHIELD ROUND';
+    UI.statusPanel.style.color = '#ffd700';
+  } else if (currentModifier === 'steal') {
+    modifierText = 'STEAL ROUND';
+    UI.statusPanel.style.color = 'var(--red)';
+  } else if (currentModifier === 'chaos') {
+    modifierText = 'CHAOS ROUND';
+    UI.statusPanel.style.color = '#aa00ff';
+  }
+  UI.statusPanel.innerText = modifierText;
 
   UI.mainBtn.style.opacity = '0';
   UI.mainBtn.style.pointerEvents = 'none';
@@ -499,6 +537,8 @@ function startGame() {
   const minDelay = Math.max(600, 1500 - (currentLevelIdx * 50));
   const maxDelay = Math.min(5000, 3500 + (currentLevelIdx * 100));
   const delay = rng * (maxDelay - minDelay) + minDelay;
+
+  targetFireTime = performance.now() + delay;
 
   beepInterval = setInterval(playLockOn, 500);
 
@@ -612,8 +652,9 @@ function firePhase() {
     });
   }
 
-  if (currentLevelIdx >= 2) {
-    const decoyCount = Math.min(5, Math.floor(currentLevelIdx / 2));
+  if (currentLevelIdx >= 2 || currentModifier === 'chaos') {
+    let decoyCount = Math.min(5, Math.floor(currentLevelIdx / 2));
+    if (currentModifier === 'chaos') decoyCount += 3;
     spawnDecoys(decoyCount, currentLevelIdx);
   }
 
@@ -622,16 +663,16 @@ function firePhase() {
 
   if (currentCommand === 'ignore') {
     fireTimeout = setTimeout(() => {
-      successGame(); // successfully ignored
-    }, 1000); // 1 second window to not mess up
+      successGame(); 
+    }, 1000); 
   } else {
     let win = currentLevel.window;
-    if (currentCommand === 'double') win += 200; // a bit more time for 2 clicks
-    if (currentCommand === 'hold') win += 500; // must hold for 400ms at least, give buffer
+    if (currentCommand === 'double') win += 200; 
+    if (currentCommand === 'hold') win += 500; 
 
     fireTimeout = setTimeout(() => {
       failGame('too slow.');
-    }, win);
+    }, win + 80);
   }
 }
 
@@ -656,6 +697,14 @@ function successGame() {
   playSuccess();
   streak++;
   if (speedModRounds > 0) speedModRounds--;
+
+  if (currentModifier === 'shield') {
+    hasShield = true;
+    spawnFloatingText(null, 'SHIELDED', '#ffd700');
+    UI.modeBadge.innerText = isOnline ? 'online versus [SHIELD]' : 'offline [SHIELD]';
+  } else if (currentModifier === 'steal' && isOnline) {
+    sendAttack('steal');
+  }
 
   // Online Attacks
   if (isOnline) {
@@ -682,6 +731,7 @@ function successGame() {
 function resetGameState() {
   clearAllTimers();
   holdActive = false; doublePending = false;
+  hasShield = false;
   UI.holdProgress.style.width = '0'; UI.holdProgress.style.height = '0';
   streak = 0;
   speedModRounds = 0;
@@ -729,6 +779,21 @@ function winGame(reason) {
 }
 
 function failGame(reason) {
+  if (hasShield) {
+    hasShield = false;
+    clearAllTimers();
+    document.body.classList.remove('screen-shake-small');
+    UI.modeBadge.innerText = isOnline ? 'online versus' : 'offline mode';
+    
+    triggerCenterAlert('shield broken!');
+    spawnFloatingText(null, 'SAVED!', '#ffd700');
+    
+    autoNextTimeout = setTimeout(() => {
+      startGame();
+    }, 1000);
+    return;
+  }
+
   resetGameState();
 
   UI.diffContainer.style.opacity = '1';
@@ -881,8 +946,17 @@ function handleInputDown(e) {
       resetGameState();
     }
   } else if (state === 'WAIT') {
-    failGame('too early.');
-  } else if (state === 'FIRE') {
+    if (performance.now() >= targetFireTime - 80) {
+      clearTimeout(waitTimeout);
+      clearInterval(beepInterval);
+      firePhase();
+    } else {
+      failGame('too early.');
+      return;
+    }
+  }
+
+  if (state === 'FIRE') {
     const targetOuter = document.getElementById('target-outer');
     if (targetOuter) {
       targetOuter.style.transform = 'scale(0.8)';
