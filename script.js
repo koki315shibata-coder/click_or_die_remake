@@ -1,6 +1,6 @@
 import { initializeApp } from "https://www.gstatic.com/firebasejs/12.10.0/firebase-app.js";
 import { getAuth, signInAnonymously } from "https://www.gstatic.com/firebasejs/12.10.0/firebase-auth.js";
-import { getDatabase, ref, set, get, update, remove, onValue, serverTimestamp, push, onChildAdded, off } from "https://www.gstatic.com/firebasejs/12.10.0/firebase-database.js";
+import { getDatabase, ref, set, get, update, remove, onValue, serverTimestamp, push, onChildAdded, off, increment } from "https://www.gstatic.com/firebasejs/12.10.0/firebase-database.js";
 
 const firebaseConfig = {
   apiKey: "AIzaSyBHXbceS4jq3XvnBHZL7VakG5C_-8lzpAo",
@@ -536,14 +536,10 @@ async function sendHack(type) {
   
   const oppRef = ref(db, `rooms/${roomCode}/players/${opponentId}`);
   
-  // Get current count to increment
+  // Atomic increment is much more reliable than get-then-update
   try {
-    const snap = await get(oppRef);
-    const data = snap.val() || {};
-    const newCount = (data.attackCount || 0) + 1;
-    
     update(oppRef, {
-      attackCount: newCount,
+      attackCount: increment(1),
       lastAttackType: type,
       lastAttackId: getServerTime() + "_" + Math.random()
     });
@@ -900,6 +896,7 @@ function getLevelParams(idx) {
   if (isOnline && pendingTimeshift) {
     params.window   = Math.floor(params.window * 0.7);
     params.threat  += ' (hacked!)';
+    pendingTimeshift = false; // consume
   }
 
   // Speed modifier (legacy rapid-fire)
@@ -953,11 +950,6 @@ function resetRoundState() {
   if (pendingMimic)    document.body.classList.add('mimic-mode');
   if (speedModRounds > 0) speedModRounds--;
   if (speedModRounds <= 0) { speedModifier = 1.0; }
-
-  // Clear hack states so they don't persist indefinitely
-  pendingMimic = false;
-  pendingTimeshift = false;
-  pendingOverload = 0;
 
   document.body.classList.remove('zen-mode');
 }
@@ -1089,6 +1081,12 @@ function startWaitPhase() {
     tw.style.transform = 'translate(-50%, -50%)';
   }
 
+  // APPLY HACKS FOR THIS ROUND
+  if (isOnline && pendingMimic) {
+    document.body.classList.add('mimic-mode');
+    pendingMimic = false;
+  }
+  
   // OVERLOAD hack: add extra decoys
   if (currentLevelIdx >= 1 || (isOnline && pendingOverload > 0)) {
     let decoyCount = Math.min(6, currentLevelIdx + 1);
@@ -1410,10 +1408,6 @@ function successGame() {
   showResult(rt, null);
   updateSidebar();
 
-  // Consume MIMIC after first fire phase
-  pendingMimic = false;
-  document.body.classList.remove('mimic-mode');
-
   autoNextTimeout = setTimeout(() => {
     if (state === 'RESULT') startGame();
   }, 500);
@@ -1711,9 +1705,8 @@ function handleInputDown(e) {
     if (!isOnline) {
       resetScores();
       startGame();
-    } else {
-      returnToLobby();
     }
+    // For online, just ignore the click here; autoNext handles it
     return;
   }
 
