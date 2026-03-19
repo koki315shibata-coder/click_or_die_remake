@@ -1448,20 +1448,25 @@ function onlineFail(reason) {
   updateFirebaseState(false);
   updateSidebar();
 
-  // Write round result to Firebase (with synced nextRoundAt)
+  // Finalize timing and write to Firebase
+  const nextAt = getServerTime() + 5500;
   if (roomRef && authUser) {
     update(roomRef, {
       roundResult: {
         round: currentOnlineRound,
         loser: authUser.uid,
         reason,
-        nextRoundAt: getServerTime() + 5500 // 5.5s to allow for network/latency
+        nextRoundAt: nextAt
       }
     });
   }
 
-  // Immediately trigger local round loss (handled via room listener now, but fallback here)
-  // handleRoundLoss(reason); // Removing to avoid double-pips if listener is fast
+  // Trigger local round loss immediately for instant feedback
+  handleRoundResult({
+    loser: authUser.uid,
+    reason: reason,
+    nextRoundAt: nextAt
+  });
 }
 
 // Offline fail (unchanged user experience)
