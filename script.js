@@ -367,8 +367,9 @@ async function createRoom() {
   });
 
   myPlayerRef = ref(db, 'rooms/' + roomCode + '/players/' + authUser.uid);
-  await set(myPlayerRef, { ready: false, streak: 0, alive: true, roundsWon: 0 });
+  await set(myPlayerRef, { ready: false, streak: 0, alive: true, roundsWon: 0, attackCount: 0 });
 
+  state = 'START';
   setupRoomListeners();
   showLobbyInfo();
 }
@@ -400,8 +401,9 @@ async function joinRoom(code) {
   }
 
   myPlayerRef = ref(db, 'rooms/' + roomCode + '/players/' + authUser.uid);
-  await set(myPlayerRef, { ready: false, streak: 0, alive: true, roundsWon: 0 });
+  await set(myPlayerRef, { ready: false, streak: 0, alive: true, roundsWon: 0, attackCount: 0 });
 
+  state = 'START';
   setupRoomListeners();
   showLobbyInfo();
 }
@@ -1591,6 +1593,7 @@ function startCountdown(endTime) {
   Lobby.btnStart.classList.add('hidden');
   Lobby.hostMessage.classList.add('hidden');
   Lobby.countdown.classList.remove('hidden');
+  Lobby.countdown.innerText = '3'; // initial fallback
 
   const iv = setInterval(() => {
     const left = Math.ceil((endTime - getServerTime()) / 1000);
@@ -1758,9 +1761,11 @@ function returnToLobby() {
   if (UI.interRoundOverlay) UI.interRoundOverlay.classList.add('hidden');
   if (UI.flashOverlay) UI.flashOverlay.className = '';
 
-  if (myPlayerRef) update(myPlayerRef, { ready: false, alive: true, streak: 0, roundsWon: 0 });
+  if (myPlayerRef) {
+    update(myPlayerRef, { ready: false, alive: true, streak: 0, roundsWon: 0, attackCount: 0 });
+  }
   
-  // Both host AND guest must reset game state — host clears the entire room
+  state = 'START';
   if (roomRef) {
     if (isHost) {
       update(roomRef, { 
