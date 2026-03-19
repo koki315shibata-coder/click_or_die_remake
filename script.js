@@ -119,6 +119,8 @@ const UI = {
   gameOverScreen: document.getElementById('game-over-screen'),
   gameOverScore: document.getElementById('go-score'),
   pingDisplay: document.getElementById('ping-display'),
+  zenChargeDisplay: document.getElementById('zen-charge-display'),
+  zenPips: document.getElementById('zen-pips'),
   roundScoreboard: document.getElementById('round-scoreboard'),
   myRoundPips: document.getElementById('my-round-pips'),
   oppRoundPips: document.getElementById('opp-round-pips'),
@@ -453,7 +455,7 @@ async function sendHack(type) {
 }
 
 function handleReceivedHack(type, hackId) {
-  if (hackId === lastHackId) return;
+  if (!hackId || hackId === lastHackId) return;
   lastHackId = hackId;
 
   // Firewall (parry) opportunity
@@ -461,9 +463,15 @@ function handleReceivedHack(type, hackId) {
   pendingParryHackType = type;
 
   playIntrusion();
-  triggerAlert('⚠ INTRUSION DETECTED', 'firewall-alert');
 
-  // Queue the hack for next round start
+  // Show named intrusion alert
+  const hackNames = { overload: 'OVERLOAD: +FAKES NEXT ROUND',
+                      timeshift: 'TIMESHIFT: TIME REDUCED',
+                      mimic: 'MIMIC: COLORS FLIPPED' };
+  const msg = hackNames[type] || type.toUpperCase();
+  triggerAlert('⚠ INTRUSION: ' + msg, 'firewall-alert');
+
+  // Queue the hack for next round
   if (type === 'overload') {
     pendingOverload = Math.floor(Math.random() * 11) + 10; // 10-20 fakes
   } else if (type === 'timeshift') {
@@ -656,13 +664,23 @@ function startNextRound() {
   perfectStreak = 0;
   currentLevelIdx = 0;
 
-  // Host clears roundResult from Firebase so it doesn't re-trigger
+  // Host clears roundResult AND hack data to prevent stale re-triggering
   if (isHost && roomRef) {
-    update(roomRef, { roundResult: null });
+    update(roomRef, {
+      roundResult: null,
+      hackTarget: null,
+      hackType: null,
+      hackId: null
+    });
   }
+
+  // Also reset parry window (can't parry between rounds)
+  parryWindowActive = false;
+  pendingParryHackType = null;
 
   updateSidebar();
   updateRoundBadge();
+  if (isOnline) updateZenPips(0);
 
   if (applyMimic) document.body.classList.add('mimic-mode');
 
@@ -707,6 +725,21 @@ function syncInterHackOptions() {
     opt.classList.remove('active');
     if (opt.getAttribute('data-hack') === equippedHack) opt.classList.add('active');
   });
+}
+
+// Update the 5-pip ZEN charge indicator in the header
+function updateZenPips(count, fired) {
+  if (!UI.zenPips) return;
+  UI.zenPips.innerHTML = '';
+  for (let i = 0; i < 5; i++) {
+    const pip = document.createElement('div');
+    if (fired && i === 4) {
+      pip.className = 'zen-pip fired';
+    } else {
+      pip.className = 'zen-pip' + (i < count ? ' charged' : '');
+    }
+    UI.zenPips.appendChild(pip);
+  }
 }
 
 
@@ -822,6 +855,7 @@ function resetRoundScores() {
   speedModRounds    = 0;
   speedModifier     = 1.0;
   document.body.classList.remove('zen-mode', 'mimic-mode', 'sudden-death-mode');
+  if (isOnline) updateZenPips(0);
 }
 
 function resetScores() {
@@ -1071,6 +1105,9 @@ function activateZenMode() {
     sendHack(equippedHack);
     showHackExecutedBanner(equippedHack);
     playHackLaunch();
+    // Show fired state on pips then clear
+    updateZenPips(5, true);
+    setTimeout(() => updateZenPips(5), 800);
   }
 }
 
@@ -1084,9 +1121,11 @@ function grantScore(e, elapsed, basePoints, typeText) {
     }
 
     perfectStreak++;
+    if (isOnline) updateZenPips(perfectStreak);
     if (perfectStreak >= 5 && !isZenMode) activateZenMode();
   } else {
     perfectStreak = 0;
+    if (isOnline) updateZenPips(0);
     if (isZenMode) {
       isZenMode = false;
       hackFiredThisZen = false;
@@ -1344,6 +1383,8 @@ function enterGameMode(online) {
     document.getElementById('opp-stats').classList.remove('hidden');
     UI.roundScoreboard.classList.remove('hidden');
     UI.pingDisplay.classList.remove('hidden');
+    UI.zenChargeDisplay.classList.remove('hidden');
+    updateZenPips(0);
     UI.bestContainer.classList.add('hidden');
     UI.diffContainer.classList.add('hidden');
     currentLevelIdx = 0;
@@ -1360,6 +1401,7 @@ function enterGameMode(online) {
     document.getElementById('opp-stats').classList.add('hidden');
     UI.roundScoreboard.classList.add('hidden');
     UI.pingDisplay.classList.add('hidden');
+    if (UI.zenChargeDisplay) UI.zenChargeDisplay.classList.add('hidden');
     UI.bestContainer.classList.remove('hidden');
     UI.diffContainer.classList.remove('hidden');
     UI.btnQuit.classList.remove('hidden');
