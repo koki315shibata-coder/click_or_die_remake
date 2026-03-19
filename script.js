@@ -79,7 +79,13 @@ let lastPingSent = 0;
 
 let opponentId = null; // cached for fast hack sending
 
-// =============================================
+// --- Time Sync ---
+let serverTimeOffset = 0;
+function getServerTime() { return Date.now() + serverTimeOffset; }
+
+// --- New Attack Protocol (Counter-based) ---
+let myProcessedAttackCount = 0;
+let lastAttackId = null; // for legacy cleanup if needed
 // SEEDED RANDOM
 // =============================================
 function seededRandom() {
@@ -320,6 +326,12 @@ async function initFirebase() {
       const app = initializeApp(firebaseConfig);
       auth = getAuth(app);
       db = getDatabase(app);
+
+      // Initialize Server Time Offset Sync
+      onValue(ref(db, ".info/serverTimeOffset"), (snap) => {
+        serverTimeOffset = snap.val() || 0;
+      });
+
       const cred = await signInAnonymously(auth);
       authUser = cred.user;
       return true;
@@ -358,7 +370,6 @@ async function createRoom() {
   await set(myPlayerRef, { ready: false, streak: 0, alive: true, roundsWon: 0 });
 
   setupRoomListeners();
-  setupHackListener();
   showLobbyInfo();
 }
 
@@ -392,7 +403,6 @@ async function joinRoom(code) {
   await set(myPlayerRef, { ready: false, streak: 0, alive: true, roundsWon: 0 });
 
   setupRoomListeners();
-  setupHackListener();
   showLobbyInfo();
 }
 
@@ -500,9 +510,9 @@ function setupRoomListeners() {
       }
     }
 
-    // Incoming hack (read from individual player slot to avoid race conditions)
-    if (myData.incomingHack && myData.incomingHack.id) {
-       handleReceivedHack(myData.incomingHack.type, myData.incomingHack.id);
+    // Incoming hack (counter-based)
+    if (myData.attackCount && myData.attackCount > myProcessedAttackCount) {
+       handleReceivedAttack(myData.lastAttackType, myData.attackCount);
     }
     
     // Ping response
@@ -521,52 +531,38 @@ function setupRoomListeners() {
 // =============================================
 // HACK SEND / RECEIVE
 // =============================================
-let lastHackId = null;
-let hackListenerRef = null;
-
 async function sendHack(type) {
-  if (!roomCode || !db) return;
+  if (!roomCode || !db || !opponentId) return;
   
-  // High-reliability search for opponentId if the cache is momentarily empty
-  if (!opponentId) {
-    try {
-      const playersSnap = await get(ref(db, `rooms/${roomCode}/players`));
-      if (playersSnap.exists()) {
-        const players = Object.keys(playersSnap.val());
-        opponentId = players.find(id => id !== authUser.uid);
-      }
-    } catch(e) { console.error("sendHack target search error", e); }
-  }
-
-  if (!opponentId) return;
-
-  // Use a dedicated 'hacks' queue per player to avoid any race conditions
-  const targetHacksRef = ref(db, `rooms/${roomCode}/hacks/${opponentId}`);
-  push(targetHacksRef, {
-    type: type,
-    sentAt: serverTimestamp()
-  });
+  const oppRef = ref(db, `rooms/${roomCode}/players/${opponentId}`);
+  
+  // Get current count to increment
+  try {
+    const snap = await get(oppRef);
+    const data = snap.val() || {};
+    const newCount = (data.attackCount || 0) + 1;
+    
+    update(oppRef, {
+      attackCount: newCount,
+      lastAttackType: type,
+      lastAttackId: getServerTime() + "_" + Math.random()
+    });
+    
+    // Local feedback
+    spawnFloatingText(null, 'HACK SENT: ' + type.toUpperCase(), 'var(--cyan)');
+  } catch(e) { console.error("sendHack error", e); }
 }
 
-function setupHackListener() {
-  if (!db || !roomCode || !authUser) return;
+function handleReceivedAttack(type, count) {
+  if (count <= myProcessedAttackCount) return;
   
-  // Clear any existing listener
-  const myHacksPath = `rooms/${roomCode}/hacks/${authUser.uid}`;
-  const myHacksRef = ref(db, myHacksPath);
-  if (hackListenerRef) off(hackListenerRef);
+  // Process each new attack in the delta
+  const delta = count - myProcessedAttackCount;
+  myProcessedAttackCount = count;
 
-  // Listen for every NEW child added to our personal hack mailbox
-  hackListenerRef = onChildAdded(myHacksRef, (snap) => {
-    const data = snap.val();
-    if (!data || !data.type) return;
-    
-    // Process the hack
-    handleReceivedHack(data.type, snap.key);
-    
-    // Remove it from the queue immediately after processing
-    remove(snap.ref);
-  });
+  for (let i = 0; i < delta; i++) {
+    handleReceivedHack(type, "attack_" + count + "_" + i);
+  }
 }
 
 function handleReceivedHack(type, hackId) {
@@ -579,7 +575,7 @@ function handleReceivedHack(type, hackId) {
 
   // Queue the hack for the next round
   if (type === 'overload') {
-    pendingOverload = Math.floor(Math.random() * 11) + 10; // 10-20 fakes
+    pendingOverload += 15; // addictive for multiple hits
   } else if (type === 'timeshift') {
     pendingTimeshift = true;
   } else if (type === 'mimic') {
@@ -683,15 +679,16 @@ function updateRoundPips() {
 function handleRoundResult(result) {
   if (roundResultHandled) return;
   roundResultHandled = true;
+  const nextAt = result.nextRoundAt || (getServerTime() + 5000);
   const iLost = result.loser === authUser.uid;
   if (iLost) {
-    handleRoundLoss(result.reason || 'you died.');
+    handleRoundLoss(result.reason || 'you died.', nextAt);
   } else {
-    handleRoundWin('opponent eliminated.');
+    handleRoundWin('opponent eliminated.', nextAt);
   }
 }
 
-function handleRoundWin(reason) {
+function handleRoundWin(reason, nextAt) {
   if (matchOver) return;
   myRoundsWon++;
   updateFirebaseState(true);
@@ -702,11 +699,11 @@ function handleRoundWin(reason) {
     matchOver = true;
     showMatchResult(true);
   } else {
-    showInterRound(true, reason);
+    showInterRound(true, reason, nextAt);
   }
 }
 
-function handleRoundLoss(reason) {
+function handleRoundLoss(reason, nextAt) {
   if (matchOver) return;
   oppRoundsWon++;
   updateRoundPips();
@@ -716,7 +713,7 @@ function handleRoundLoss(reason) {
     matchOver = true;
     showMatchResult(false);
   } else {
-    showInterRound(false, reason);
+    showInterRound(false, reason, nextAt);
   }
 }
 
@@ -741,20 +738,21 @@ function showInterRound(iWon, reason, nextRoundAt) {
 
   // Use a strict 5-second local timer to guarantee exactly 5 seconds for both players
   // regardless of when they received the Firebase update or what their PC clock says.
-  let secondsLeft = 5;
-  UI.interRoundTimer.innerText = secondsLeft;
+  // Synchronized countdown using nextRoundAt
+  const updateTimer = () => {
+    const now = getServerTime();
+    const left = Math.ceil((nextRoundAt - now) / 1000);
+    UI.interRoundTimer.innerText = Math.max(0, left);
 
-  const tick = () => {
-    secondsLeft--;
-    UI.interRoundTimer.innerText = Math.max(0, secondsLeft);
-    if (secondsLeft <= 0) {
+    if (left <= 0) {
       clearInterval(interRoundTimer);
       interRoundTimer = null;
-      if (state === 'INTER_ROUND') startNextRound(); // BOTH players run this perfectly synced
+      if (state === 'INTER_ROUND') startNextRound();
     }
   };
   
-  interRoundTimer = setInterval(tick, 1000);
+  interRoundTimer = setInterval(updateTimer, 100);
+  updateTimer(); // Initial call
 }
 
 function startNextRound() {
@@ -948,6 +946,8 @@ function resetRoundState() {
   parryWindowActive = false;
   pendingParryHackType = null;
   lastHackId    = null; // allow fresh hack in next round
+  roundResultHandled = false;
+  myProcessedAttackCount = 0; // reset attack processing for new round
 
   // Consume pending hacks (they were set last round, consume now)
   if (pendingMimic)    document.body.classList.add('mimic-mode');
@@ -1448,19 +1448,20 @@ function onlineFail(reason) {
   updateFirebaseState(false);
   updateSidebar();
 
-  // Write round result to Firebase (remove nextRoundAt timestamp sync)
+  // Write round result to Firebase (with synced nextRoundAt)
   if (roomRef && authUser) {
     update(roomRef, {
       roundResult: {
         round: currentOnlineRound,
         loser: authUser.uid,
-        reason
+        reason,
+        nextRoundAt: getServerTime() + 5500 // 5.5s to allow for network/latency
       }
     });
   }
 
-  // Immediately trigger local round loss
-  handleRoundLoss(reason);
+  // Immediately trigger local round loss (handled via room listener now, but fallback here)
+  // handleRoundLoss(reason); // Removing to avoid double-pips if listener is fast
 }
 
 // Offline fail (unchanged user experience)
@@ -1593,7 +1594,7 @@ function startCountdown(endTime) {
   Lobby.countdown.classList.remove('hidden');
 
   const iv = setInterval(() => {
-    const left = Math.ceil((endTime - Date.now()) / 1000);
+    const left = Math.ceil((endTime - getServerTime()) / 1000);
     if (left > 0) {
       Lobby.countdown.innerText = left;
     } else {
@@ -1872,8 +1873,8 @@ Lobby.btnStart.addEventListener('click', async () => {
       await update(roomRef, {
         state: 'starting',
         gameStarted: true,
-        startedAt: Date.now(),
-        countdownEnd: Date.now() + 3000
+        startedAt: getServerTime(), // SYNCED
+        countdownEnd: getServerTime() + 3000 // SYNCED
       });
     } catch (e) {
       console.error('[Lobby] Firebase Error on Start Game:', e);
