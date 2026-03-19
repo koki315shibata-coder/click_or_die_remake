@@ -387,14 +387,17 @@ function setupRoomListeners() {
           }
         }
       }
+    }
 
-      const isStarting = data.state === 'starting' || data.gameStarted === true;
-      if (isStarting && state !== 'WAIT' && state !== 'FIRE') {
-        Lobby.hostMessage.classList.add('hidden');
-        Lobby.btnStart.classList.add('hidden');
-        if (Lobby.countdown.classList.contains('hidden')) {
-          startCountdown(data.countdownEnd);
-        }
+    // --- Game start detection: placed OUTSIDE data.players guard so it fires on every snapshot ---
+    // Only trigger if not already in an active game state
+    const isStarting = (data.state === 'starting') || (data.gameStarted === true && data.state !== 'lobby' && data.state !== 'playing');
+    const safeToStart = state === 'START' || state === 'RESULT';
+    if (isStarting && safeToStart) {
+      Lobby.hostMessage.classList.add('hidden');
+      Lobby.btnStart.classList.add('hidden');
+      if (Lobby.countdown.classList.contains('hidden') && data.countdownEnd) {
+        startCountdown(data.countdownEnd);
       }
     }
 
@@ -721,6 +724,7 @@ function resetRoundState() {
   hackFiredThisZen  = false;
   parryWindowActive = false;
   pendingParryHackType = null;
+  lastHackId    = null; // allow fresh hack in next round
 
   // Consume pending hacks (they were set last round, consume now)
   if (pendingMimic)    document.body.classList.add('mimic-mode');
@@ -1371,7 +1375,16 @@ function returnToLobby() {
   UI.interRoundOverlay.classList.add('hidden');
 
   if (myPlayerRef) update(myPlayerRef, { ready: false, alive: true, streak: 0, roundsWon: 0 });
-  if (isHost && roomRef) update(roomRef, { state: 'lobby', gameStarted: false });
+  // Both host AND guest must reset game state — host clears the room state
+  if (roomRef) {
+    if (isHost) {
+      update(roomRef, { state: 'lobby', gameStarted: false,
+        hackTarget: null, hackType: null, hackId: null });
+    } else {
+      // Guest: If host already left, still try to clean up starting state
+      update(roomRef, { gameStarted: false });
+    }
+  }
   showLobbyInfo();
   showScreen('screen-lobby');
   state = 'START';
