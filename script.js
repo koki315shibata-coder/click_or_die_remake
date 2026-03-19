@@ -77,6 +77,8 @@ let parryWindowActive = false;// firewall opportunity
 let pingInterval = null;
 let lastPingSent = 0;
 
+let opponentId = null; // cached for fast hack sending
+
 // =============================================
 // SEEDED RANDOM
 // =============================================
@@ -427,9 +429,9 @@ function setupRoomListeners() {
           oppRoundsWon = oppWins;
           updateRoundPips();
         }
-
-        // Round result is now handled via data.roundResult (see below)
+        opponentId = oppId;
       } else {
+        opponentId = null;
         Lobby.p2Slot.innerHTML = `opponent: <span class="status">waiting for join...</span>`;
       }
 
@@ -520,16 +522,16 @@ function setupRoomListeners() {
 let lastHackId = null;
 
 async function sendHack(type) {
-  if (!roomRef || !db) return;
-  const playersSnap = await get(ref(db, 'rooms/' + roomCode + '/players'));
-  if (!playersSnap.exists()) return;
-  const oppId = Object.keys(playersSnap.val()).find(id => id !== authUser.uid);
-  if (!oppId) return;
+  if (!roomRef || !opponentId) return;
+  // Use cached opponentId to avoid async get() overhead during intense play
   update(roomRef, {
-    hackTarget: oppId,
+    hackTarget: opponentId,
     hackType: type,
     hackId: Date.now() + '_' + Math.random()
   });
+  
+  // Local feedback that the hack was sent
+  spawnFloatingText(null, 'HACK SENT: ' + type.toUpperCase(), 'var(--cyan)');
 }
 
 function handleReceivedHack(type, hackId) {
@@ -1140,15 +1142,22 @@ function spawnPerfectBurst(e, isZen) {
 }
 
 function spawnFloatingText(e, text, color) {
-  if (!e) return;
   const el = document.createElement('div');
   el.className = 'floating-text';
   el.innerText = text;
   el.style.color = color;
+  el.style.textAlign = 'center';
+  el.style.width = 'fit-content';
+  el.style.transform = 'translate(-50%, -50%)';
+
   let x = window.innerWidth / 2;
   let y = window.innerHeight / 2;
-  if (e.clientX !== undefined) { x = e.clientX; y = e.clientY; }
-  else if (e.touches && e.touches.length > 0) { x = e.touches[0].clientX; y = e.touches[0].clientY; }
+  
+  if (e) {
+    if (e.clientX !== undefined) { x = e.clientX; y = e.clientY; }
+    else if (e.touches && e.touches.length > 0) { x = e.touches[0].clientX; y = e.touches[0].clientY; }
+  }
+  
   el.style.left = x + 'px';
   el.style.top  = y + 'px';
   document.body.appendChild(el);
@@ -1773,9 +1782,13 @@ UI.mainBtn.addEventListener('touchstart', handleInputDown, { passive: false });
 Lobby.hackOptions.forEach(opt => {
   const selectFunc = (e) => {
     if (e.cancelable) e.preventDefault();
-    Lobby.hackOptions.forEach(o => o.classList.remove('active'));
-    opt.classList.add('active');
     equippedHack = opt.getAttribute('data-hack');
+    
+    // Sync all selector UIs
+    document.querySelectorAll('.hack-option, .inter-hack-option').forEach(o => {
+      o.classList.remove('active');
+      if (o.getAttribute('data-hack') === equippedHack) o.classList.add('active');
+    });
   };
   opt.addEventListener('click', selectFunc);
   opt.addEventListener('touchstart', selectFunc, { passive: false });
@@ -1785,11 +1798,10 @@ Lobby.hackOptions.forEach(opt => {
 document.querySelectorAll('.inter-hack-option').forEach(opt => {
   const selectFunc = (e) => {
     if (e.cancelable) e.preventDefault();
-    document.querySelectorAll('.inter-hack-option').forEach(o => o.classList.remove('active'));
-    opt.classList.add('active');
     equippedHack = opt.getAttribute('data-hack');
-    // Also sync the lobby options to stay consistent
-    Lobby.hackOptions.forEach(o => {
+
+    // Sync all selector UIs
+    document.querySelectorAll('.hack-option, .inter-hack-option').forEach(o => {
       o.classList.remove('active');
       if (o.getAttribute('data-hack') === equippedHack) o.classList.add('active');
     });
