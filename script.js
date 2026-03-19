@@ -594,15 +594,13 @@ function handleRoundLoss(reason) {
 
 function showInterRound(iWon, reason) {
   clearAllTimers();
-  state = 'RESULT';
+  state = 'INTER_ROUND'; // blocks all clicks during 5s break
   document.body.classList.remove('zen-mode', 'mimic-mode', 'sudden-death-mode');
   wipeTargets();
 
-  const roundJustPlayed = myRoundsWon + oppRoundsWon;  // total rounds completed
+  const roundJustPlayed = myRoundsWon + oppRoundsWon;
   const nextRound = roundJustPlayed + 1;
-  const totalRounds = ROUNDS_TO_WIN * 2 - 1; // max 5
 
-  // Update inter-round overlay
   const roundLabel = document.getElementById('inter-round-label');
   if (roundLabel) roundLabel.innerText = `ROUND ${roundJustPlayed} OVER  //  NEXT: ROUND ${nextRound}`;
 
@@ -648,7 +646,7 @@ function updateRoundBadge() {
 
 function showMatchResult(iWon) {
   clearAllTimers();
-  state = 'RESULT';
+  state = 'MATCH_OVER'; // requires explicit button press to exit
   document.body.classList.remove('zen-mode', 'mimic-mode', 'sudden-death-mode');
   wipeTargets();
   UI.interRoundOverlay.classList.add('hidden');
@@ -666,6 +664,7 @@ function showMatchResult(iWon) {
 
   updateFirebaseState(iWon);
 
+  // Show return button prominently
   UI.mainBtn.style.opacity = '1';
   UI.mainBtn.style.pointerEvents = 'auto';
   UI.mainBtn.innerText = 'return to lobby';
@@ -1113,7 +1112,8 @@ function successGame() {
 
 // Online fail → round loss, not match over immediately
 function onlineFail(reason) {
-  isZenMode    = false;
+  if (state === 'INTER_ROUND' || state === 'MATCH_OVER') return;
+  isZenMode     = false;
   perfectStreak = 0;
   hackFiredThisZen = false;
   document.body.classList.remove('zen-mode');
@@ -1121,19 +1121,26 @@ function onlineFail(reason) {
   clearAllTimers();
   activeTarget.resolved = true;
 
-  UI.diffContainer.style.opacity    = '1';
-  UI.diffContainer.style.pointerEvents = 'auto';
-
+  // Brief visual feedback — not a game-over, just a round end
+  UI.gameArea.className = 'state-start';
   flashScreen('red');
-  playFail();
+
+  // Soft round-loss sound (not the harsh offline fail beep)
+  playTone(220, 'sine', 0.4, 0.12);
+  setTimeout(() => playTone(160, 'sine', 0.5, 0.1), 180);
 
   document.body.classList.add('screen-shake');
-  setTimeout(() => document.body.classList.remove('screen-shake'), 300);
+  setTimeout(() => document.body.classList.remove('screen-shake'), 250);
+
+  UI.targetStatus.innerText = reason;
+  UI.statusPanel.innerText  = 'round lost.';
+  UI.statusPanel.style.color = 'var(--red)';
 
   updateFirebaseState(false);
   updateSidebar();
 
-  handleRoundLoss(reason);
+  // Short pause so red flash is visible, then inter-round overlay
+  setTimeout(() => handleRoundLoss(reason), 600);
 }
 
 // Offline fail (unchanged user experience)
@@ -1326,13 +1333,18 @@ function handleBackgroundClick(e) {
   if (e && e.cancelable) e.preventDefault();
   initAudio();
 
-  if (state === 'START' || state === 'RESULT') {
-    if (state === 'RESULT' && performance.now() - resultStartTime < 300) return;
-    if (!isOnline) {
-      startGame();
-    } else {
-      returnToLobby();
-    }
+  // INTER_ROUND: 5-second break, block ALL clicks
+  if (state === 'INTER_ROUND') return;
+  // MATCH_OVER: only the explicit button should work, not background
+  if (state === 'MATCH_OVER') return;
+
+  if (state === 'START') {
+    if (!isOnline) startGame();
+    // Online: background click does nothing in START (use lobby button)
+  } else if (state === 'RESULT') {
+    if (performance.now() - resultStartTime < 300) return;
+    if (!isOnline) startGame();
+    // Online RESULT: do nothing on background click, user must use main btn
   } else if (state === 'WAIT') {
     if (performance.now() >= targetFireTime - 80) {
       clearTimeout(waitTimeout);
@@ -1356,10 +1368,24 @@ function handleInputDown(e) {
   if (e) e.stopImmediatePropagation();
   initAudio();
 
-  if (state === 'START' || state === 'RESULT') {
-    if (state === 'RESULT' && performance.now() - resultStartTime < 300) return;
+  // INTER_ROUND: 5-second break, block ALL inputs
+  if (state === 'INTER_ROUND') return;
+
+  // MATCH_OVER: only the main 'return to lobby' button works
+  if (state === 'MATCH_OVER') {
+    returnToLobby();
+    return;
+  }
+
+  if (state === 'START') {
+    if (!isOnline) startGame();
+    return;
+  }
+
+  if (state === 'RESULT') {
+    if (performance.now() - resultStartTime < 300) return;
     if (!isOnline) {
-      if (state === 'RESULT') resetScores();
+      resetScores();
       startGame();
     } else {
       returnToLobby();
