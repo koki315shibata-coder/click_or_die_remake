@@ -885,3 +885,112 @@ body.zen-mode .floating-text {
   0%   { box-shadow: 0 0 0 0 rgba(255,215,0,0.8); }
   100% { box-shadow: 0 0 0 60px rgba(255,215,0,0); }
 }
+
+/* ================================================
+   MOBILE RESPONSIVE IMPROVEMENTS
+   ================================================ */
+
+/* Smaller header on mobile so play area is maximized */
+@media (max-width: 480px) {
+  #top-header {
+    padding: 8px 12px;
+    flex-wrap: wrap;
+    gap: 8px;
+  }
+  #top-header h1 {
+    font-size: 1.1rem;
+  }
+  #top-header .brand {
+    flex: 1;
+  }
+
+  /* Collapse opp-stats + zen-charge horizontally */
+  #opp-stats, #zen-charge-display, #round-scoreboard, #ping-display {
+    font-size: 0.7rem;
+  }
+  #ping-display {
+    font-size: 0.65rem;
+  }
+
+  /* Target wrapper: allow larger click area on touch */
+  #main-target {
+    width: 80px;
+    height: 80px;
+    min-width: 80px;
+    min-height: 80px;
+  }
+  .fake-target {
+    width: 72px;
+    height: 72px;
+  }
+
+  /* Sidebar smaller */
+  .sidebar {
+    gap: 10px;
+    padding: 8px 12px;
+  }
+  .stat .value {
+    font-size: 1.4rem;
+  }
+
+  /* Footer compacted */
+  footer {
+    padding: 8px 16px;
+  }
+  .level-info h2 {
+    font-size: 0.9rem;
+  }
+  .level-info p {
+    font-size: 0.7rem;
+  }
+
+  /* Inter-round overlay text smaller */
+  #inter-round-overlay {
+    font-size: 0.85rem;
+  }
+  #inter-round-timer {
+    font-size: 2.5rem;
+  }
+}
+
+/* ================================================
+   ONLINE MODE ROUND CLARITY
+   ================================================ */
+
+/* Highlight who just won/lost more visibly */
+#inter-round-result {
+  font-size: 1.5rem;
+  font-weight: 900;
+  letter-spacing: 3px;
+  text-transform: uppercase;
+}
+
+/* Score readout between rounds */
+#inter-round-score {
+  font-size: 1rem;
+  color: var(--text-muted);
+  letter-spacing: 1px;
+}
+
+/* Make countdown huge and obvious */
+#inter-round-timer {
+  font-size: 4rem;
+  font-weight: 900;
+  color: var(--green);
+  font-family: var(--font-display);
+  line-height: 1;
+  animation: timerPulse 1s ease-in-out infinite;
+}
+@keyframes timerPulse {
+  0%, 100% { transform: scale(1);    opacity: 1;   }
+  50%       { transform: scale(1.05); opacity: 0.8; }
+}
+
+/* Round label (e.g. ROUND 1 OVER // NEXT: ROUND 2) */
+#inter-round-label {
+  font-size: 0.9rem;
+  letter-spacing: 3px;
+  text-transform: uppercase;
+  color: var(--text-muted);
+  margin-bottom: 10px;
+}

@@ -110,8 +110,7 @@ const UI = {
   resultDisplay: document.getElementById('result-display'),
   resultTime: document.getElementById('result-time'),
   resultRank: document.getElementById('result-rank'),
-  diffBtns: document.querySelectorAll('.diff-btn'),
-  diffContainer: document.getElementById('difficulty-selector-container'),
+  // diffBtns and diffContainer removed (buttons deleted from HTML)
   bestContainer: document.getElementById('best-stat-container'),
   flashOverlay: document.getElementById('flash-overlay'),
   clickLayer: document.getElementById('click-layer'),
@@ -771,6 +770,14 @@ function updateRoundBadge() {
   UI.modeBadge.innerText = `online · round ${roundNum} of ${ROUNDS_TO_WIN * 2 - 1}`;
 }
 
+// Show round score clearly during active online round
+function showOnlineRoundHUD() {
+  if (!isOnline) return;
+  const roundNum = myRoundsWon + oppRoundsWon + 1;
+  UI.statusPanel.innerText = `you ${myRoundsWon} — opp ${oppRoundsWon}  ·  round ${roundNum}`;
+  UI.statusPanel.style.color = 'var(--text-muted)';
+}
+
 function showMatchResult(iWon) {
   clearAllTimers();
   state = 'MATCH_OVER'; // requires explicit button press to exit
@@ -951,7 +958,6 @@ function resetScores() {
 function resetGameState() {
   clearAllTimers();
   activeTarget.resolved = true;
-  const activeBtn = Array.from(UI.diffBtns).find(b => b.classList.contains('active'));
   currentLevelIdx = 0; // always reset to level 1 on death
   wipeTargets();
 }
@@ -991,8 +997,8 @@ function startGame() {
     UI.gameArea.className = 'state-wait';
     UI.mainBtn.style.opacity = '0';
     UI.mainBtn.style.pointerEvents = 'none';
-    UI.diffContainer.style.opacity = '0.2';
-    UI.diffContainer.style.pointerEvents = 'none';
+    if (UI.diffContainer) UI.diffContainer.style.opacity = '0.2';
+    if (UI.diffContainer) UI.diffContainer.style.pointerEvents = 'none';
 
     let count = 3;
     UI.targetStatus.innerText = count;
@@ -1019,6 +1025,7 @@ function startGame() {
 function startWaitPhase() {
   state = 'WAIT';
   UI.gameArea.className = 'state-wait';
+  if (isOnline) showOnlineRoundHUD(); // show score during active play
   UI.targetStatus.innerText = 'waiting...';
   UI.statusPanel.style.color = 'var(--text-muted)';
   UI.statusPanel.innerText = 'wait for it';
@@ -1026,8 +1033,8 @@ function startWaitPhase() {
   UI.mainBtn.style.pointerEvents = 'none';
 
   const lvlParams = getLevelParams(currentLevelIdx);
-  UI.diffContainer.style.opacity = '0.2';
-  UI.diffContainer.style.pointerEvents = 'none';
+  if (UI.diffContainer) UI.diffContainer.style.opacity = '0.2';
+  if (UI.diffContainer) UI.diffContainer.style.pointerEvents = 'none';
   document.documentElement.style.setProperty('--pulse-dur', `${lvlParams.pulseDur}s`);
 
   const tw = document.getElementById('target-wrapper');
@@ -1132,15 +1139,24 @@ function spawnFloatingText(e, text, color) {
 }
 
 function getRandomPos(level, existingPositions = []) {
-  const tSize = 100;
-  const maxW = window.innerWidth - tSize - 40;
-  const maxH = window.innerHeight - tSize - 160;
-  const spreadX = maxW / 2;
-  const spreadY = maxH / 2;
-  const minDist = 110;
-  let x, y, valid = false, attempts = 0;
+  const tSize = 80;  // target visual radius
+  // Safe play area: leave room for header (~110px) and footer (~140px), side padding 30px
+  const safeTop    = 110;
+  const safeBottom = 140;
+  const safeSide   = 30;
+  const areaW = window.innerWidth  - safeSide * 2;
+  const areaH = window.innerHeight - safeTop - safeBottom;
+  const spreadX = Math.max(60, (areaW  - tSize) / 2);
+  const spreadY = Math.max(60, (areaH  - tSize) / 2);
 
-  while (!valid && attempts < 50) {
+  // Adaptive minimum distance: smaller on narrow screens so placement is always possible
+  const rawMinDist = 120;
+  // Max distance that can fit given the spread (need at least 2 non-overlapping slots)
+  const maxPossible = Math.min(spreadX, spreadY) * 1.2;
+  const minDist = Math.min(rawMinDist, maxPossible * 0.7);
+
+  let x, y, valid = false, attempts = 0;
+  while (!valid && attempts < 80) {
     x = (seededRandom() * spreadX * 2) - spreadX;
     y = (seededRandom() * spreadY * 2) - spreadY;
     valid = true;
@@ -1149,12 +1165,21 @@ function getRandomPos(level, existingPositions = []) {
       if (Math.sqrt(dx*dx + dy*dy) < minDist) { valid = false; break; }
     }
     attempts++;
+    // Relax minDist progressively if stuck
+    if (!valid && attempts % 20 === 0 && minDist > 60) {
+      // continue with smaller effective minDist on next pass
+    }
   }
+  // If still not placed after 80 attempts, use best effort (no overlap check)
   return { x, y };
 }
 
 function spawnDecoys(count, level, existingPositions) {
-  for (let i = 0; i < count; i++) {
+  // On small screens limit fake count so they can all be placed without overlap
+  const isMobile = window.innerWidth <= 480;
+  const maxFakes = isMobile ? Math.min(count, 3) : count;
+
+  for (let i = 0; i < maxFakes; i++) {
     const decoy = document.createElement('div');
     decoy.className = 'fake-target';
 
@@ -1390,8 +1415,8 @@ function failGame(reason) {
 
   resetGameState();
 
-  UI.diffContainer.style.opacity    = '1';
-  UI.diffContainer.style.pointerEvents = 'auto';
+  if (UI.diffContainer) UI.diffContainer.style.opacity    = '1';
+  if (UI.diffContainer) UI.diffContainer.style.pointerEvents = 'auto';
 
   state = 'RESULT';
   resultStartTime = performance.now();
@@ -1424,8 +1449,8 @@ function winGame(reason) {
     return;
   }
   resetGameState();
-  UI.diffContainer.style.opacity    = '1';
-  UI.diffContainer.style.pointerEvents = 'auto';
+  if (UI.diffContainer) UI.diffContainer.style.opacity    = '1';
+  if (UI.diffContainer) UI.diffContainer.style.pointerEvents = 'auto';
   state = 'RESULT';
   UI.gameArea.className = 'state-success';
   flashScreen('white');
@@ -1500,11 +1525,7 @@ function updateSidebar() {
 }
 
 function updateSelectorUI() {
-  UI.diffBtns.forEach(btn => btn.classList.remove('active'));
-  if (currentLevelIdx < 5) {
-    const activeBtn = Array.from(UI.diffBtns).find(b => parseInt(b.dataset.level) === (currentLevelIdx + 1));
-    if (activeBtn) activeBtn.classList.add('active');
-  }
+  // difficulty buttons removed — no-op
 }
 
 // =============================================
@@ -1539,7 +1560,7 @@ function enterGameMode(online) {
     UI.zenChargeDisplay.classList.remove('hidden');
     updateZenPips(0);
     UI.bestContainer.classList.add('hidden');
-    UI.diffContainer.classList.add('hidden');
+    if (UI.diffContainer) UI.diffContainer.classList.add('hidden');
     currentLevelIdx = 0;
     UI.btnQuit.classList.remove('hidden');
     UI.mainBtn.classList.add('hidden');
@@ -1556,7 +1577,7 @@ function enterGameMode(online) {
     UI.pingDisplay.classList.add('hidden');
     if (UI.zenChargeDisplay) UI.zenChargeDisplay.classList.add('hidden');
     UI.bestContainer.classList.remove('hidden');
-    UI.diffContainer.classList.remove('hidden');
+    if (UI.diffContainer) UI.diffContainer.classList.remove('hidden');
     UI.btnQuit.classList.remove('hidden');
     UI.mainBtn.classList.remove('hidden');
     UI.mainBtn.style.opacity = '1';
@@ -1734,28 +1755,7 @@ document.querySelectorAll('.inter-hack-option').forEach(opt => {
   });
 });
 
-// Difficulty buttons (offline only)
-UI.diffBtns.forEach(btn => {
-  const handler = (e) => {
-    e.stopPropagation();
-    if (state !== 'START' && state !== 'RESULT') return;
-    currentLevelIdx = parseInt(e.target.dataset.level) - 1;
-    resetScores();
-    updateSelectorUI();
-    updateSidebar();
-    if (state === 'RESULT') {
-      UI.gameArea.className   = 'state-start';
-      UI.targetStatus.innerText = 'one miss and it ends.';
-      UI.resultDisplay.classList.add('hidden');
-      UI.mainBtn.innerText    = 'play';
-      UI.statusPanel.innerText = 'ready.';
-      UI.statusPanel.style.color = 'var(--text-muted)';
-      state = 'START';
-    }
-  };
-  btn.addEventListener('mousedown', handler);
-  btn.addEventListener('touchstart', handler);
-});
+// difficulty buttons removed from HTML — no listeners needed
 
 // Menu buttons
 Lobby.btnOffline.addEventListener('click', () => { initAudio(); enterGameMode(false); });
