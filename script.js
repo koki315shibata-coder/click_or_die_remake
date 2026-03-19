@@ -127,6 +127,7 @@ const UI = {
   interRoundOverlay: document.getElementById('inter-round-overlay'),
   interRoundResult: document.getElementById('inter-round-result'),
   interRoundScore: document.getElementById('inter-round-score'),
+  hackIndicator: document.getElementById('hack-indicator'),
   interRoundTimer: document.getElementById('inter-round-timer')
 };
 
@@ -552,6 +553,11 @@ function handleReceivedHack(type, hackId) {
                       mimic: 'MIMIC: COLORS FLIPPED' };
   const msg = hackNames[type] || type.toUpperCase();
   triggerAlert('⚠ INTRUSION: ' + msg, 'firewall-alert hack-glitch-text');
+  
+  if (UI.hackIndicator) {
+    UI.hackIndicator.className = 'under-attack-ui';
+    UI.hackIndicator.innerText = '⚠ UNDER ATTACK: ' + type.toUpperCase();
+  }
 
   // Queue the hack for next round
   if (type === 'overload') {
@@ -578,6 +584,9 @@ function attemptParry() {
   playFirewall();
   flashScreen('white');
   triggerAlert('⚡ FIREWALL ACTIVATED', 'firewall-success-alert');
+  if (UI.hackIndicator) {
+    UI.hackIndicator.className = 'hidden';
+  }
   return true;
 }
 
@@ -927,6 +936,15 @@ function resetRoundState() {
   if (speedModRounds > 0) speedModRounds--;
   if (speedModRounds <= 0) { speedModifier = 1.0; }
 
+  // Clear hack states so they don't persist indefinitely
+  pendingMimic = false;
+  pendingTimeshift = false;
+  pendingOverload = 0;
+
+  if (UI.hackIndicator) {
+    UI.hackIndicator.className = 'hidden';
+    UI.hackIndicator.innerText = '';
+  }
   document.body.classList.remove('zen-mode');
 }
 
@@ -988,10 +1006,10 @@ function startGame() {
   resetUI();
   wipeTargets();
 
-  // Apply pending hacks from previous round
-  if (isOnline) {
-    if (pendingMimic) document.body.classList.add('mimic-mode');
-  }
+  // Reset pending hacks on fresh match start
+  pendingMimic = false;
+  pendingTimeshift = false;
+  pendingOverload = 0;
 
   updateFirebaseState(true);
 

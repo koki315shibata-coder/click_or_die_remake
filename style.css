@@ -325,7 +325,7 @@ main {
 }
 
 /* HACK OPTIONS (LOADOUT) */
-.hack-option { cursor:crosshair; 
+.hack-option { pointer-events: auto; position: relative; z-index: 100;  cursor:crosshair; 
   color: var(--text-muted);
   cursor: pointer;
   font-family: var(--font-mono);
@@ -1059,4 +1059,47 @@ body.zen-mode .floating-text {
 }
 @keyframes fadeOutBanner {
   to { opacity: 0; transform: scale(1.1); }
+}
+
+/* Persistent "Under Attack" and "Hacking" Overlays */
+.under-attack-ui {
+  position: absolute;
+  z-index: 1000;
+  top: 15%;
+  left: 50%;
+  transform: translateX(-50%);
+  color: var(--magenta);
+  font-weight: 800;
+  font-size: 1.5rem;
+  letter-spacing: 2px;
+  text-shadow: 0 0 10px var(--magenta);
+  z-index: 100;
+  animation: pulseAttack 1s infinite alternate;
+  pointer-events: none;
+}
+
+.hacking-ui {
+  position: absolute;
+  z-index: 1000;
+  top: 15%;
+  left: 50%;
+  transform: translateX(-50%);
+  color: var(--cyan);
+  font-weight: 800;
+  font-size: 1.5rem;
+  letter-spacing: 2px;
+  text-shadow: 0 0 10px var(--cyan);
+  z-index: 100;
+  animation: pulseHacking 1s infinite alternate;
+  pointer-events: none;
+}
+
+@keyframes pulseAttack {
+  0% { opacity: 0.5; color: var(--magenta); text-shadow: 0 0 5px var(--magenta); }
+  100% { opacity: 1; color: var(--red); text-shadow: 0 0 20px var(--red); }
+}
+
+@keyframes pulseHacking {
+  0% { opacity: 0.5; text-shadow: 0 0 5px var(--cyan); }
+  100% { opacity: 1; text-shadow: 0 0 20px var(--cyan); }
 }
