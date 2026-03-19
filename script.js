@@ -63,6 +63,8 @@ let oppRoundsWon = 0;
 const ROUNDS_TO_WIN = 3;
 let interRoundTimer = null;
 let matchOver = false;
+let currentOnlineRound = 1;    // incremented each round
+let roundResultHandled = false; // prevents double-processing
 
 // --- Incoming hack state (applied next round) ---
 let pendingOverload = 0;      // extra decoy count
@@ -346,12 +348,7 @@ function setupRoomListeners() {
           updateRoundPips();
         }
 
-        // Round resolution: detect opponent death during play
-        if (data.state === 'playing') {
-          if (!oppData.alive && myData.alive && state !== 'RESULT' && !matchOver) {
-            handleRoundWin("opponent eliminated.");
-          }
-        }
+        // Round result is now handled via data.roundResult (see below)
       } else {
         Lobby.p2Slot.innerHTML = `opponent: <span class="status">waiting for join...</span>`;
       }
@@ -402,9 +399,12 @@ function setupRoomListeners() {
       }
     }
 
+    // --- Round result detection (single source of truth for round outcomes) ---
+    if (data.roundResult && data.roundResult.round === currentOnlineRound && !roundResultHandled) {
+      handleRoundResult(data.roundResult);
+    }
+
     // --- Game start detection ---
-    // SAFETY: Only trigger if data.state is explicitly 'starting', AND
-    //         two players are confirmed, AND we're not already in the game.
     const playerCount = data.players ? Object.keys(data.players).length : 0;
     const isStarting = data.state === 'starting' && playerCount >= 2 && !!data.countdownEnd;
     const safeToStart = state === 'START';
@@ -563,7 +563,18 @@ function updateRoundPips() {
   }
 }
 
-function handleRoundWin(reason) {
+function handleRoundResult(result) {
+  if (roundResultHandled) return;
+  roundResultHandled = true;
+  const iLost = result.loser === authUser.uid;
+  if (iLost) {
+    handleRoundLoss(result.reason || 'you died.', result.nextRoundAt);
+  } else {
+    handleRoundWin('opponent eliminated.', result.nextRoundAt);
+  }
+}
+
+function handleRoundWin(reason, nextRoundAt) {
   if (matchOver) return;
   myRoundsWon++;
   updateFirebaseState(true);
@@ -574,11 +585,11 @@ function handleRoundWin(reason) {
     matchOver = true;
     showMatchResult(true);
   } else {
-    showInterRound(true, reason);
+    showInterRound(true, reason, nextRoundAt);
   }
 }
 
-function handleRoundLoss(reason) {
+function handleRoundLoss(reason, nextRoundAt) {
   if (matchOver) return;
   oppRoundsWon++;
   updateRoundPips();
@@ -588,11 +599,11 @@ function handleRoundLoss(reason) {
     matchOver = true;
     showMatchResult(false);
   } else {
-    showInterRound(false, reason);
+    showInterRound(false, reason, nextRoundAt);
   }
 }
 
-function showInterRound(iWon, reason) {
+function showInterRound(iWon, reason, nextRoundAt) {
   clearAllTimers();
   state = 'INTER_ROUND'; // blocks all clicks during 5s break
   document.body.classList.remove('zen-mode', 'mimic-mode', 'sudden-death-mode');
@@ -611,30 +622,50 @@ function showInterRound(iWon, reason) {
   syncInterHackOptions();
   UI.interRoundOverlay.classList.remove('hidden');
 
-  let countdown = 5;
-  UI.interRoundTimer.innerText = countdown;
+  // Use synchronized nextRoundAt timestamp for countdown (both players count down together)
+  const fallbackEnd = Date.now() + 5500;
+  const endAt = nextRoundAt || fallbackEnd;
 
-  interRoundTimer = setInterval(() => {
-    countdown--;
-    UI.interRoundTimer.innerText = countdown;
-    if (countdown <= 0) {
+  const tick = () => {
+    const left = Math.ceil((endAt - Date.now()) / 1000);
+    UI.interRoundTimer.innerText = Math.max(0, left);
+    if (Date.now() >= endAt) {
       clearInterval(interRoundTimer);
       interRoundTimer = null;
-      startNextRound();
+      if (state === 'INTER_ROUND') startNextRound();
     }
-  }, 1000);
+  };
+  tick();
+  interRoundTimer = setInterval(tick, 250);
 }
 
 function startNextRound() {
+  if (state !== 'INTER_ROUND') return; // prevent double-call
+  if (interRoundTimer) { clearInterval(interRoundTimer); interRoundTimer = null; }
   UI.interRoundOverlay.classList.add('hidden');
+
+  // Advance round counter and re-arm result handler
+  currentOnlineRound++;
+  roundResultHandled = false;
+
+  // Apply pending hack from previous round, then clear everything
+  const applyMimic = pendingMimic;
   resetRoundState();
-  // Reset per-round score/streak but keep roundsWon
   streak = 0;
   score = 0;
   perfectStreak = 0;
   currentLevelIdx = 0;
+
+  // Host clears roundResult from Firebase so it doesn't re-trigger
+  if (isHost && roomRef) {
+    update(roomRef, { roundResult: null });
+  }
+
   updateSidebar();
   updateRoundBadge();
+
+  if (applyMimic) document.body.classList.add('mimic-mode');
+
   startGame();
 }
 
@@ -768,9 +799,11 @@ function resetRoundState() {
 
 // Called once per online match start
 function resetMatchState() {
-  myRoundsWon   = 0;
-  oppRoundsWon  = 0;
-  matchOver     = false;
+  myRoundsWon        = 0;
+  oppRoundsWon       = 0;
+  matchOver          = false;
+  currentOnlineRound = 1;
+  roundResultHandled = false;
   resetRoundScores();
   updateRoundPips();
 }
@@ -1113,6 +1146,9 @@ function successGame() {
 // Online fail → round loss, not match over immediately
 function onlineFail(reason) {
   if (state === 'INTER_ROUND' || state === 'MATCH_OVER') return;
+  if (roundResultHandled) return; // already handled this round
+  roundResultHandled = true;
+
   isZenMode     = false;
   perfectStreak = 0;
   hackFiredThisZen = false;
@@ -1121,14 +1157,12 @@ function onlineFail(reason) {
   clearAllTimers();
   activeTarget.resolved = true;
 
-  // Brief visual feedback — not a game-over, just a round end
+  // Visual feedback
   UI.gameArea.className = 'state-start';
   flashScreen('red');
-
-  // Soft round-loss sound (not the harsh offline fail beep)
+  // Soft round-loss sound
   playTone(220, 'sine', 0.4, 0.12);
   setTimeout(() => playTone(160, 'sine', 0.5, 0.1), 180);
-
   document.body.classList.add('screen-shake');
   setTimeout(() => document.body.classList.remove('screen-shake'), 250);
 
@@ -1139,8 +1173,21 @@ function onlineFail(reason) {
   updateFirebaseState(false);
   updateSidebar();
 
-  // Short pause so red flash is visible, then inter-round overlay
-  setTimeout(() => handleRoundLoss(reason), 600);
+  // Write round result to Firebase so BOTH players get the synchronized result
+  const nextRoundAt = Date.now() + 5500;
+  if (roomRef && authUser) {
+    update(roomRef, {
+      roundResult: {
+        round: currentOnlineRound,
+        loser: authUser.uid,
+        reason,
+        nextRoundAt
+      }
+    });
+  }
+
+  // Immediately trigger local round loss (don't wait for our own Firebase echo)
+  handleRoundLoss(reason, nextRoundAt);
 }
 
 // Offline fail (unchanged user experience)
