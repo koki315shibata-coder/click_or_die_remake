@@ -540,13 +540,18 @@ function handleReceivedHack(type, hackId) {
   pendingParryHackType = type;
 
   playIntrusion();
+  
+  // Severe visual impact for receiving a hack
+  flashScreen('hack'); // magenta
+  document.body.classList.add('screen-shake-intense');
+  setTimeout(() => document.body.classList.remove('screen-shake-intense'), 400);
 
   // Show named intrusion alert
   const hackNames = { overload: 'OVERLOAD: +FAKES NEXT ROUND',
                       timeshift: 'TIMESHIFT: TIME REDUCED',
                       mimic: 'MIMIC: COLORS FLIPPED' };
   const msg = hackNames[type] || type.toUpperCase();
-  triggerAlert('⚠ INTRUSION: ' + msg, 'firewall-alert');
+  triggerAlert('⚠ INTRUSION: ' + msg, 'firewall-alert hack-glitch-text');
 
   // Queue the hack for next round
   if (type === 'overload') {
@@ -653,13 +658,13 @@ function handleRoundResult(result) {
   roundResultHandled = true;
   const iLost = result.loser === authUser.uid;
   if (iLost) {
-    handleRoundLoss(result.reason || 'you died.', result.nextRoundAt);
+    handleRoundLoss(result.reason || 'you died.');
   } else {
-    handleRoundWin('opponent eliminated.', result.nextRoundAt);
+    handleRoundWin('opponent eliminated.');
   }
 }
 
-function handleRoundWin(reason, nextRoundAt) {
+function handleRoundWin(reason) {
   if (matchOver) return;
   myRoundsWon++;
   updateFirebaseState(true);
@@ -670,11 +675,11 @@ function handleRoundWin(reason, nextRoundAt) {
     matchOver = true;
     showMatchResult(true);
   } else {
-    showInterRound(true, reason, nextRoundAt);
+    showInterRound(true, reason);
   }
 }
 
-function handleRoundLoss(reason, nextRoundAt) {
+function handleRoundLoss(reason) {
   if (matchOver) return;
   oppRoundsWon++;
   updateRoundPips();
@@ -684,7 +689,7 @@ function handleRoundLoss(reason, nextRoundAt) {
     matchOver = true;
     showMatchResult(false);
   } else {
-    showInterRound(false, reason, nextRoundAt);
+    showInterRound(false, reason);
   }
 }
 
@@ -707,21 +712,22 @@ function showInterRound(iWon, reason, nextRoundAt) {
   syncInterHackOptions();
   UI.interRoundOverlay.classList.remove('hidden');
 
-  // Use synchronized nextRoundAt timestamp for countdown (both players count down together)
-  const fallbackEnd = Date.now() + 5500;
-  const endAt = nextRoundAt || fallbackEnd;
+  // Use a strict 5-second local timer to guarantee exactly 5 seconds for both players
+  // regardless of when they received the Firebase update or what their PC clock says.
+  let secondsLeft = 5;
+  UI.interRoundTimer.innerText = secondsLeft;
 
   const tick = () => {
-    const left = Math.ceil((endAt - Date.now()) / 1000);
-    UI.interRoundTimer.innerText = Math.max(0, left);
-    if (Date.now() >= endAt) {
+    secondsLeft--;
+    UI.interRoundTimer.innerText = Math.max(0, secondsLeft);
+    if (secondsLeft <= 0) {
       clearInterval(interRoundTimer);
       interRoundTimer = null;
-      if (state === 'INTER_ROUND') startNextRound();
+      if (state === 'INTER_ROUND') startNextRound(); // BOTH players run this perfectly synced
     }
   };
-  tick();
-  interRoundTimer = setInterval(tick, 250);
+  
+  interRoundTimer = setInterval(tick, 1000);
 }
 
 function startNextRound() {
@@ -816,9 +822,10 @@ function syncInterHackOptions() {
 function updateZenPips(count, fired) {
   if (!UI.zenPips) return;
   UI.zenPips.innerHTML = '';
-  for (let i = 0; i < 3; i++) {
+  // Only 2 pips now required for ZEN
+  for (let i = 0; i < 2; i++) {
     const pip = document.createElement('div');
-    if (fired && i === 2) {
+    if (fired && i === 1) {
       pip.className = 'zen-pip fired';
     } else {
       pip.className = 'zen-pip' + (i < count ? ' charged' : '');
@@ -1290,7 +1297,7 @@ function grantScore(e, elapsed, basePoints, typeText) {
     perfectStreak++;
     if (isZenMode) zenNoteIndex++;   // rises with each ZEN PERFECT
     if (isOnline) updateZenPips(perfectStreak);
-    if (perfectStreak >= 3 && !isZenMode) activateZenMode();
+    if (perfectStreak >= 2 && !isZenMode) activateZenMode();
   } else {
     perfectStreak = 0;
     if (isOnline) updateZenPips(0);
@@ -1390,21 +1397,19 @@ function onlineFail(reason) {
   updateFirebaseState(false);
   updateSidebar();
 
-  // Write round result to Firebase so BOTH players get the synchronized result
-  const nextRoundAt = Date.now() + 5500;
+  // Write round result to Firebase (remove nextRoundAt timestamp sync)
   if (roomRef && authUser) {
     update(roomRef, {
       roundResult: {
         round: currentOnlineRound,
         loser: authUser.uid,
-        reason,
-        nextRoundAt
+        reason
       }
     });
   }
 
-  // Immediately trigger local round loss (don't wait for our own Firebase echo)
-  handleRoundLoss(reason, nextRoundAt);
+  // Immediately trigger local round loss
+  handleRoundLoss(reason);
 }
 
 // Offline fail (unchanged user experience)

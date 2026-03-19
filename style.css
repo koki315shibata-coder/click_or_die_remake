@@ -325,7 +325,7 @@ main {
 }
 
 /* HACK OPTIONS (LOADOUT) */
-.hack-option {
+.hack-option { cursor:crosshair; 
   color: var(--text-muted);
   cursor: pointer;
   font-family: var(--font-mono);
@@ -993,4 +993,70 @@ body.zen-mode .floating-text {
   text-transform: uppercase;
   color: var(--text-muted);
   margin-bottom: 10px;
+}
+
+/* ================================================
+   HACK VISUAL IMPACT IMPROVEMENTS
+   ================================================ */
+
+/* Intense screen shake for intrusion */
+@keyframes shakeIntense {
+  0% { transform: translate(0, 0) rotate(0deg); }
+  10% { transform: translate(-10px, -10px) rotate(-2deg); }
+  20% { transform: translate(15px, 5px) rotate(2deg); }
+  30% { transform: translate(-15px, 15px) rotate(-1deg); }
+  40% { transform: translate(10px, -15px) rotate(1deg); }
+  50% { transform: translate(-5px, 10px) rotate(-1deg); }
+  60% { transform: translate(5px, -10px) rotate(1deg); }
+  70% { transform: translate(-10px, 5px) rotate(-2deg); }
+  80% { transform: translate(10px, 10px) rotate(2deg); }
+  90% { transform: translate(-5px, -5px) rotate(-1deg); }
+  100% { transform: translate(0, 0) rotate(0deg); }
+}
+
+.screen-shake-intense {
+  animation: shakeIntense 0.4s cubic-bezier(.36,.07,.19,.97) both;
+}
+
+/* Glitch text effect for intrusion alert */
+@keyframes glitch-anim {
+  0% { clip-path: inset(10% 0 80% 0); transform: translate(-2px, 1px); color: red; }
+  20% { clip-path: inset(80% 0 5% 0); transform: translate(2px, -1px); color: cyan; }
+  40% { clip-path: inset(40% 0 40% 0); transform: translate(-2px, 2px); color: magenta; }
+  60% { clip-path: inset(20% 0 60% 0); transform: translate(2px, -2px); color: lime; }
+  80% { clip-path: inset(60% 0 10% 0); transform: translate(-1px, 1px); color: yellow; }
+  100% { clip-path: inset(0% 0 0% 0); transform: translate(0, 0); color: inherit; }
+}
+
+.hack-glitch-text {
+  animation: glitch-anim 0.3s cubic-bezier(.25, .46, .45, .94) both 3;
+}
+
+/* Flash overlay specific for hacks (e.g. purple/magenta) */
+.flash-hack {
+  background: rgba(255, 0, 255, 0.4);
+  opacity: 1;
+  transition: opacity 0.5s ease-out;
+}
+
+/* Hack execution banner - bigger, slams into screen */
+.hack-executed-banner {
+  font-size: 3rem;
+  font-weight: 900;
+  text-shadow: 0 0 20px var(--magenta);
+  color: var(--text-main);
+  background: rgba(0,0,0,0.8);
+  border-top: 2px solid var(--magenta);
+  border-bottom: 2px solid var(--magenta);
+  padding: 20px 0;
+  width: 100%;
+  animation: slamIn 0.3s cubic-bezier(0.175, 0.885, 0.32, 1.275) forwards, fadeOutBanner 0.5s 1.5s forwards;
+}
+
+@keyframes slamIn {
+  0% { transform: scale(3); opacity: 0; }
+  100% { transform: scale(1); opacity: 1; }
+}
+@keyframes fadeOutBanner {
+  to { opacity: 0; transform: scale(1.1); }
 }
