@@ -1037,9 +1037,11 @@ body.zen-mode .floating-text {
 
 /* Flash overlay specific for hacks (e.g. purple/magenta) */
 .flash-hack {
-  background: rgba(255, 0, 255, 0.4);
-  opacity: 1;
-  transition: opacity 0.5s ease-out;
+  animation: flashHackAnim 0.3s ease-out forwards;
+}
+@keyframes flashHackAnim {
+  0% { background: rgba(255, 0, 255, 0.6); opacity: 1; }
+  100% { background: rgba(255, 0, 255, 0); opacity: 0; }
 }
 
 /* Hack execution banner - bigger, slams into screen */

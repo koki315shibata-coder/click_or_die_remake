@@ -130,6 +130,7 @@ const UI = {
   interRoundResult: document.getElementById('inter-round-result'),
   interRoundScore: document.getElementById('inter-round-score'),
   hackIndicator: document.getElementById('hack-indicator'),
+  lobbyCurrentHack: document.getElementById('lobby-current-hack'),
   interRoundTimer: document.getElementById('inter-round-timer')
 };
 
@@ -498,11 +499,11 @@ function setupRoomListeners() {
       }
     }
 
-    // Incoming hack
-    if (data.hackTarget === authUser.uid && data.hackId) {
-      handleReceivedHack(data.hackType, data.hackId);
+    // Incoming hack (read from individual player slot to avoid race conditions)
+    if (myData.incomingHack && myData.incomingHack.id) {
+       handleReceivedHack(myData.incomingHack.type, myData.incomingHack.id);
     }
-
+    
     // Ping response
     if (data.pingResponse && data.pingResponse.target === authUser.uid) {
       const ping = Date.now() - data.pingResponse.sentAt;
@@ -522,12 +523,29 @@ function setupRoomListeners() {
 let lastHackId = null;
 
 async function sendHack(type) {
-  if (!roomRef || !opponentId) return;
-  // Use cached opponentId to avoid async get() overhead during intense play
-  update(roomRef, {
-    hackTarget: opponentId,
-    hackType: type,
-    hackId: Date.now() + '_' + Math.random()
+  if (!roomRef || !db) return;
+  
+  // High-reliability search for opponentId if the cache is momentarily empty
+  if (!opponentId) {
+    const playersSnap = await get(ref(db, `rooms/${roomCode}/players`));
+    if (playersSnap.exists()) {
+      const players = Object.keys(playersSnap.val());
+      opponentId = players.find(id => id !== authUser.uid);
+    }
+  }
+
+  if (!opponentId) {
+     spawnFloatingText(null, 'NO TARGET FOUND!', 'var(--red)');
+     return;
+  }
+
+  // Write to the opponent's specific data slot so we don't overwrite other players' hacks
+  const oppRef = ref(db, `rooms/${roomCode}/players/${opponentId}`);
+  update(oppRef, {
+    incomingHack: {
+      type: type,
+      id: Date.now() + '_' + Math.random()
+    }
   });
   
   // Local feedback that the hack was sent
@@ -537,6 +555,12 @@ async function sendHack(type) {
 function handleReceivedHack(type, hackId) {
   if (!hackId || hackId === lastHackId) return;
   lastHackId = hackId;
+
+  // 1. Wipe the hack from Firebase immediately so we don't re-trigger it 
+  // on subsequent room updates, and to free the slot for the next incoming hack.
+  if (myPlayerRef) {
+    update(myPlayerRef, { incomingHack: null });
+  }
 
   // Firewall (parry) opportunity
   parryWindowActive = true;
@@ -1536,7 +1560,7 @@ function showResult(rt, overrideRank) {
 function flashScreen(color) {
   UI.flashOverlay.className = '';
   void UI.flashOverlay.offsetWidth;
-  UI.flashOverlay.className = color === 'white' ? 'flash-white' : 'flash-red';
+  UI.flashOverlay.className = 'flash-' + color; // flash-white, flash-red, flash-hack
 }
 
 function updateBestScore() {
@@ -1783,12 +1807,19 @@ Lobby.hackOptions.forEach(opt => {
   const selectFunc = (e) => {
     if (e.cancelable) e.preventDefault();
     equippedHack = opt.getAttribute('data-hack');
-    
+
     // Sync all selector UIs
     document.querySelectorAll('.hack-option, .inter-hack-option').forEach(o => {
       o.classList.remove('active');
       if (o.getAttribute('data-hack') === equippedHack) o.classList.add('active');
     });
+
+    if (UI.lobbyCurrentHack) {
+      UI.lobbyCurrentHack.innerText = 'CURRENT LOADOUT: ' + equippedHack.toUpperCase();
+    }
+
+    // Mobile Feedback: Show selection on screen
+    spawnFloatingText(null, 'LOADOUT: ' + equippedHack.toUpperCase(), 'var(--magenta)');
   };
   opt.addEventListener('click', selectFunc);
   opt.addEventListener('touchstart', selectFunc, { passive: false });
@@ -1805,6 +1836,13 @@ document.querySelectorAll('.inter-hack-option').forEach(opt => {
       o.classList.remove('active');
       if (o.getAttribute('data-hack') === equippedHack) o.classList.add('active');
     });
+
+    if (UI.lobbyCurrentHack) {
+      UI.lobbyCurrentHack.innerText = 'CURRENT LOADOUT: ' + equippedHack.toUpperCase();
+    }
+
+    // Mobile Feedback: Show selection on screen
+    spawnFloatingText(null, 'LOADOUT: ' + equippedHack.toUpperCase(), 'var(--magenta)');
   };
   opt.addEventListener('click', selectFunc);
   opt.addEventListener('touchstart', selectFunc, { passive: false });
