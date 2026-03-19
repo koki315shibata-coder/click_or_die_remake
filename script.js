@@ -544,9 +544,7 @@ function handleReceivedHack(type, hackId) {
   
   // Severe visual impact for receiving a hack
   flashScreen('hack'); // magenta
-  document.body.classList.add('screen-shake-intense');
-  setTimeout(() => document.body.classList.remove('screen-shake-intense'), 400);
-
+  
   // Show named intrusion alert
   const hackNames = { overload: 'OVERLOAD: +FAKES NEXT ROUND',
                       timeshift: 'TIMESHIFT: TIME REDUCED',
@@ -601,13 +599,7 @@ function triggerAlert(text, cssClass) {
 // Legacy alias
 function triggerCenterAlert(text) { triggerAlert(text, ''); }
 
-function showHackExecutedBanner(hackName) {
-  const el = document.createElement('div');
-  el.className = 'hack-executed-banner';
-  el.innerText = `EXECUTED: ${hackName.toUpperCase()}`;
-  document.body.appendChild(el);
-  setTimeout(() => el.remove(), 2200);
-}
+// showHackExecutedBanner removed per user request
 
 // =============================================
 // PING
@@ -1286,20 +1278,18 @@ function activateZenMode() {
   zenNoteIndex = 0;   // start scale from bottom
   document.body.classList.add('zen-mode');
   flashScreen('white');
-  document.body.classList.add('screen-shake');
   spawnFloatingText(null, 'ZONE ENTERED', '#ffd700');
   playTone(1000, 'square', 0.5, 0.2);
-  setTimeout(() => document.body.classList.remove('screen-shake'), 300);
 
   // Fire hack at opponent (online only, once per ZEN)
   if (isOnline && !hackFiredThisZen) {
     hackFiredThisZen = true;
     sendHack(equippedHack);
-    showHackExecutedBanner(equippedHack);
+    // showHackExecutedBanner removed per user request
     playHackLaunch();
     // Show fired state on pips then clear
-    updateZenPips(5, true);
-    setTimeout(() => updateZenPips(5), 800);
+    updateZenPips(2, true);
+    setTimeout(() => updateZenPips(2), 800);
   }
 }
 
@@ -1314,8 +1304,21 @@ function grantScore(e, elapsed, basePoints, typeText) {
 
     perfectStreak++;
     if (isZenMode) zenNoteIndex++;   // rises with each ZEN PERFECT
-    if (isOnline) updateZenPips(perfectStreak);
-    if (perfectStreak >= 2 && !isZenMode) activateZenMode();
+    if (isOnline) updateZenPips(perfectStreak % 2); // 2-pip cycle if in ZEN
+    
+    if (perfectStreak >= 2 && !isZenMode) {
+      activateZenMode();
+    } else if (isZenMode && perfectStreak % 2 === 0) {
+      // Fire additional hacks if we stay in ZEN
+      if (isOnline) {
+        sendHack(equippedHack);
+        if (UI.hackIndicator) {
+          UI.hackIndicator.className = 'hacking-ui';
+          UI.hackIndicator.innerText = '⚡ HACKING OPPONENT: ' + equippedHack.toUpperCase();
+          setTimeout(() => { if(UI.hackIndicator?.className === 'hacking-ui') UI.hackIndicator.className = 'hidden'; }, 1500);
+        }
+      }
+    }
   } else {
     perfectStreak = 0;
     if (isOnline) updateZenPips(0);
@@ -1405,8 +1408,6 @@ function onlineFail(reason) {
   // Soft round-loss sound
   playTone(220, 'sine', 0.4, 0.12);
   setTimeout(() => playTone(160, 'sine', 0.5, 0.1), 180);
-  document.body.classList.add('screen-shake');
-  setTimeout(() => document.body.classList.remove('screen-shake'), 250);
 
   UI.targetStatus.innerText = reason;
   UI.statusPanel.innerText  = 'round lost.';
@@ -1444,8 +1445,7 @@ function failGame(reason) {
   state = 'RESULT';
   resultStartTime = performance.now();
   UI.gameArea.className = 'state-start';
-  document.body.classList.add('screen-shake');
-
+  
   flashScreen('red');
   playFail();
 
@@ -1497,7 +1497,6 @@ function clearTemporaryFeedback() {
   if (feedbackTimeout) { clearTimeout(feedbackTimeout); feedbackTimeout = null; }
   document.querySelectorAll('.floating-text').forEach(e => e.remove());
   UI.gameArea.className = '';
-  document.body.classList.remove('screen-shake', 'screen-shake-small');
   UI.targetStatus.innerText = '';
   UI.resultDisplay.classList.add('hidden');
 }
@@ -1772,25 +1771,31 @@ UI.mainBtn.addEventListener('touchstart', handleInputDown, { passive: false });
 
 // Lobby hack options (pre-match)
 Lobby.hackOptions.forEach(opt => {
-  opt.addEventListener('click', (e) => {
+  const selectFunc = (e) => {
+    if (e.cancelable) e.preventDefault();
     Lobby.hackOptions.forEach(o => o.classList.remove('active'));
-    e.target.classList.add('active');
-    equippedHack = e.target.getAttribute('data-hack');
-  });
+    opt.classList.add('active');
+    equippedHack = opt.getAttribute('data-hack');
+  };
+  opt.addEventListener('click', selectFunc);
+  opt.addEventListener('touchstart', selectFunc, { passive: false });
 });
 
 // Inter-round hack options (mid-match)
 document.querySelectorAll('.inter-hack-option').forEach(opt => {
-  opt.addEventListener('click', (e) => {
+  const selectFunc = (e) => {
+    if (e.cancelable) e.preventDefault();
     document.querySelectorAll('.inter-hack-option').forEach(o => o.classList.remove('active'));
-    e.target.classList.add('active');
-    equippedHack = e.target.getAttribute('data-hack');
+    opt.classList.add('active');
+    equippedHack = opt.getAttribute('data-hack');
     // Also sync the lobby options to stay consistent
     Lobby.hackOptions.forEach(o => {
       o.classList.remove('active');
       if (o.getAttribute('data-hack') === equippedHack) o.classList.add('active');
     });
-  });
+  };
+  opt.addEventListener('click', selectFunc);
+  opt.addEventListener('touchstart', selectFunc, { passive: false });
 });
 
 // difficulty buttons removed from HTML — no listeners needed
