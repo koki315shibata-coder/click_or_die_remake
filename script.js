@@ -1,6 +1,6 @@
 import { initializeApp } from "https://www.gstatic.com/firebasejs/12.10.0/firebase-app.js";
 import { getAuth, signInAnonymously } from "https://www.gstatic.com/firebasejs/12.10.0/firebase-auth.js";
-import { getDatabase, ref, set, get, update, remove, onValue, serverTimestamp } from "https://www.gstatic.com/firebasejs/12.10.0/firebase-database.js";
+import { getDatabase, ref, set, get, update, remove, onValue, serverTimestamp, push, onChildAdded, off } from "https://www.gstatic.com/firebasejs/12.10.0/firebase-database.js";
 
 const firebaseConfig = {
   apiKey: "AIzaSyBHXbceS4jq3XvnBHZL7VakG5C_-8lzpAo",
@@ -129,7 +129,6 @@ const UI = {
   interRoundOverlay: document.getElementById('inter-round-overlay'),
   interRoundResult: document.getElementById('inter-round-result'),
   interRoundScore: document.getElementById('inter-round-score'),
-  hackIndicator: document.getElementById('hack-indicator'),
   lobbyCurrentHack: document.getElementById('lobby-current-hack'),
   interRoundTimer: document.getElementById('inter-round-timer')
 };
@@ -359,6 +358,7 @@ async function createRoom() {
   await set(myPlayerRef, { ready: false, streak: 0, alive: true, roundsWon: 0 });
 
   setupRoomListeners();
+  setupHackListener();
   showLobbyInfo();
 }
 
@@ -392,6 +392,7 @@ async function joinRoom(code) {
   await set(myPlayerRef, { ready: false, streak: 0, alive: true, roundsWon: 0 });
 
   setupRoomListeners();
+  setupHackListener();
   showLobbyInfo();
 }
 
@@ -521,69 +522,62 @@ function setupRoomListeners() {
 // HACK SEND / RECEIVE
 // =============================================
 let lastHackId = null;
+let hackListenerRef = null;
 
 async function sendHack(type) {
-  if (!roomRef || !db) return;
+  if (!roomCode || !db) return;
   
   // High-reliability search for opponentId if the cache is momentarily empty
   if (!opponentId) {
-    const playersSnap = await get(ref(db, `rooms/${roomCode}/players`));
-    if (playersSnap.exists()) {
-      const players = Object.keys(playersSnap.val());
-      opponentId = players.find(id => id !== authUser.uid);
-    }
+    try {
+      const playersSnap = await get(ref(db, `rooms/${roomCode}/players`));
+      if (playersSnap.exists()) {
+        const players = Object.keys(playersSnap.val());
+        opponentId = players.find(id => id !== authUser.uid);
+      }
+    } catch(e) { console.error("sendHack target search error", e); }
   }
 
-  if (!opponentId) {
-     spawnFloatingText(null, 'NO TARGET FOUND!', 'var(--red)');
-     return;
-  }
+  if (!opponentId) return;
 
-  // Write to the opponent's specific data slot so we don't overwrite other players' hacks
-  const oppRef = ref(db, `rooms/${roomCode}/players/${opponentId}`);
-  update(oppRef, {
-    incomingHack: {
-      type: type,
-      id: Date.now() + '_' + Math.random()
-    }
+  // Use a dedicated 'hacks' queue per player to avoid any race conditions
+  const targetHacksRef = ref(db, `rooms/${roomCode}/hacks/${opponentId}`);
+  push(targetHacksRef, {
+    type: type,
+    sentAt: serverTimestamp()
   });
+}
+
+function setupHackListener() {
+  if (!db || !roomCode || !authUser) return;
   
-  // Local feedback that the hack was sent
-  spawnFloatingText(null, 'HACK SENT: ' + type.toUpperCase(), 'var(--cyan)');
+  // Clear any existing listener
+  const myHacksPath = `rooms/${roomCode}/hacks/${authUser.uid}`;
+  const myHacksRef = ref(db, myHacksPath);
+  if (hackListenerRef) off(hackListenerRef);
+
+  // Listen for every NEW child added to our personal hack mailbox
+  hackListenerRef = onChildAdded(myHacksRef, (snap) => {
+    const data = snap.val();
+    if (!data || !data.type) return;
+    
+    // Process the hack
+    handleReceivedHack(data.type, snap.key);
+    
+    // Remove it from the queue immediately after processing
+    remove(snap.ref);
+  });
 }
 
 function handleReceivedHack(type, hackId) {
   if (!hackId || hackId === lastHackId) return;
   lastHackId = hackId;
 
-  // 1. Wipe the hack from Firebase immediately so we don't re-trigger it 
-  // on subsequent room updates, and to free the slot for the next incoming hack.
-  if (myPlayerRef) {
-    update(myPlayerRef, { incomingHack: null });
-  }
-
   // Firewall (parry) opportunity
   parryWindowActive = true;
   pendingParryHackType = type;
 
-  playIntrusion();
-  
-  // Severe visual impact for receiving a hack
-  flashScreen('hack'); // magenta
-  
-  // Show named intrusion alert
-  const hackNames = { overload: 'OVERLOAD: +FAKES NEXT ROUND',
-                      timeshift: 'TIMESHIFT: TIME REDUCED',
-                      mimic: 'MIMIC: COLORS FLIPPED' };
-  const msg = hackNames[type] || type.toUpperCase();
-  triggerAlert('⚠ INTRUSION: ' + msg, 'firewall-alert hack-glitch-text');
-  
-  if (UI.hackIndicator) {
-    UI.hackIndicator.className = 'under-attack-ui';
-    UI.hackIndicator.innerText = '⚠ UNDER ATTACK: ' + type.toUpperCase();
-  }
-
-  // Queue the hack for next round
+  // Queue the hack for the next round
   if (type === 'overload') {
     pendingOverload = Math.floor(Math.random() * 11) + 10; // 10-20 fakes
   } else if (type === 'timeshift') {
@@ -591,6 +585,15 @@ function handleReceivedHack(type, hackId) {
   } else if (type === 'mimic') {
     pendingMimic = true;
   }
+
+  playIntrusion();
+  flashScreen('hack'); // magenta
+  
+  const hackNames = { overload: 'OVERLOAD: +FAKES NEXT ROUND',
+                      timeshift: 'TIMESHIFT: TIME REDUCED',
+                      mimic: 'MIMIC: COLORS FLIPPED' };
+  const msg = hackNames[type] || type.toUpperCase();
+  triggerAlert('⚠ INTRUSION: ' + msg, 'firewall-alert hack-glitch-text');
 }
 
 let pendingParryHackType = null;
@@ -608,9 +611,6 @@ function attemptParry() {
   playFirewall();
   flashScreen('white');
   triggerAlert('⚡ FIREWALL ACTIVATED', 'firewall-success-alert');
-  if (UI.hackIndicator) {
-    UI.hackIndicator.className = 'hidden';
-  }
   return true;
 }
 
@@ -959,10 +959,6 @@ function resetRoundState() {
   pendingTimeshift = false;
   pendingOverload = 0;
 
-  if (UI.hackIndicator) {
-    UI.hackIndicator.className = 'hidden';
-    UI.hackIndicator.innerText = '';
-  }
   document.body.classList.remove('zen-mode');
 }
 
@@ -1314,15 +1310,12 @@ function activateZenMode() {
   spawnFloatingText(null, 'ZONE ENTERED', '#ffd700');
   playTone(1000, 'square', 0.5, 0.2);
 
-  // Fire hack at opponent (online only, once per ZEN)
-  if (isOnline && !hackFiredThisZen) {
-    hackFiredThisZen = true;
+  // Fire first hack immediately
+  if (isOnline) {
     sendHack(equippedHack);
-    // showHackExecutedBanner removed per user request
     playHackLaunch();
-    // Show fired state on pips then clear
-    updateZenPips(2, true);
-    setTimeout(() => updateZenPips(2), 800);
+    updateZenPips(3, true); // Flash 3 pips
+    setTimeout(() => updateZenPips(0), 800);
   }
 }
 
@@ -1337,19 +1330,24 @@ function grantScore(e, elapsed, basePoints, typeText) {
 
     perfectStreak++;
     if (isZenMode) zenNoteIndex++;   // rises with each ZEN PERFECT
-    if (isOnline) updateZenPips(perfectStreak % 2); // 2-pip cycle if in ZEN
+    if (isOnline) {
+      // 3-pip cycle for ZEN
+      const charge = isZenMode ? 3 : (streak % 3 || (streak > 0 ? 0 : 0)); 
+      // Wait, let's just use a simple 1,2,3 logic
+      let c = streak % 3;
+      if (c === 0 && streak > 0) c = 3;
+      updateZenPips(isZenMode ? 3 : c);
+    }
     
-    if (perfectStreak >= 2 && !isZenMode) {
+    // ZEN trigger: any 3-hit streak
+    if (streak >= 3 && !isZenMode) {
       activateZenMode();
-    } else if (isZenMode && perfectStreak % 2 === 0) {
-      // Fire additional hacks if we stay in ZEN
+    } else if (isZenMode) {
+      // In ZEN mode, EVERY hit fires a hack (previously every 2 hits)
       if (isOnline) {
         sendHack(equippedHack);
-        if (UI.hackIndicator) {
-          UI.hackIndicator.className = 'hacking-ui';
-          UI.hackIndicator.innerText = '⚡ HACKING OPPONENT: ' + equippedHack.toUpperCase();
-          setTimeout(() => { if(UI.hackIndicator?.className === 'hacking-ui') UI.hackIndicator.className = 'hidden'; }, 1500);
-        }
+        playHackLaunch(); 
+        // No persistent UI text here to keep screen clean
       }
     }
   } else {
@@ -1429,6 +1427,7 @@ function onlineFail(reason) {
 
   isZenMode     = false;
   perfectStreak = 0;
+  streak        = 0;
   hackFiredThisZen = false;
   document.body.classList.remove('zen-mode');
 
@@ -1468,6 +1467,7 @@ function onlineFail(reason) {
 function failGame(reason) {
   isZenMode    = false;
   perfectStreak = 0;
+  streak        = 0;
   document.body.classList.remove('zen-mode');
 
   resetGameState();
