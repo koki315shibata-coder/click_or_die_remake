@@ -850,6 +850,13 @@ function getLevelParams(idx) {
     params.pulseDur = Math.max(0.1, 0.4 - (diff * 0.03));
   }
 
+  // Online: give +25% time so fighting feels comfortable (hacks can still shrink it)
+  if (isOnline) {
+    params.window = Math.floor(params.window * 1.25);
+    // Also raise the Omega floor so it never gets too brutal online
+    params.window = Math.max(params.window, 300);
+  }
+
   // TIMESHIFT hack: shrink window 30%
   if (isOnline && pendingTimeshift) {
     params.window   = Math.floor(params.window * 0.7);
@@ -945,7 +952,7 @@ function resetGameState() {
   clearAllTimers();
   activeTarget.resolved = true;
   const activeBtn = Array.from(UI.diffBtns).find(b => b.classList.contains('active'));
-  currentLevelIdx = isOnline ? 0 : (activeBtn ? parseInt(activeBtn.dataset.level) - 1 : 0);
+  currentLevelIdx = 0; // always reset to level 1 on death
   wipeTargets();
 }
 
@@ -1312,7 +1319,7 @@ function successGame() {
   streakEl.classList.add('score-pulse');
 
   streak++;
-  if (streak % 1 === 0) currentLevelIdx++;
+  if (streak % 5 === 0) currentLevelIdx++; // level up every 5 hits
   updateFirebaseState(true);
   updateSelectorUI();
   updateBestScore();
