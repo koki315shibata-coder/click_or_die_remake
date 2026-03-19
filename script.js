@@ -290,6 +290,19 @@ async function joinRoom(code) {
     return;
   }
 
+  const roomData = snap.val();
+  // Reject rooms that are in-progress or have stale state
+  if (roomData.state === 'playing') {
+    Lobby.error.innerText = "Game already in progress.";
+    Lobby.error.classList.remove('hidden');
+    roomCode = null; roomRef = null;
+    return;
+  }
+  // Reset any stale starting-state from a crashed previous session
+  if (roomData.state === 'starting' || roomData.gameStarted) {
+    await update(roomRef, { state: 'lobby', gameStarted: false });
+  }
+
   myPlayerRef = ref(db, 'rooms/' + roomCode + '/players/' + authUser.uid);
   await set(myPlayerRef, { ready: false, streak: 0, alive: true, roundsWon: 0 });
 
@@ -389,14 +402,16 @@ function setupRoomListeners() {
       }
     }
 
-    // --- Game start detection: placed OUTSIDE data.players guard so it fires on every snapshot ---
-    // Only trigger if not already in an active game state
-    const isStarting = (data.state === 'starting') || (data.gameStarted === true && data.state !== 'lobby' && data.state !== 'playing');
-    const safeToStart = state === 'START' || state === 'RESULT';
+    // --- Game start detection ---
+    // SAFETY: Only trigger if data.state is explicitly 'starting', AND
+    //         two players are confirmed, AND we're not already in the game.
+    const playerCount = data.players ? Object.keys(data.players).length : 0;
+    const isStarting = data.state === 'starting' && playerCount >= 2 && !!data.countdownEnd;
+    const safeToStart = state === 'START';
     if (isStarting && safeToStart) {
       Lobby.hostMessage.classList.add('hidden');
       Lobby.btnStart.classList.add('hidden');
-      if (Lobby.countdown.classList.contains('hidden') && data.countdownEnd) {
+      if (Lobby.countdown.classList.contains('hidden')) {
         startCountdown(data.countdownEnd);
       }
     }
@@ -551,7 +566,7 @@ function updateRoundPips() {
 function handleRoundWin(reason) {
   if (matchOver) return;
   myRoundsWon++;
-  updateFirebaseState(true);  // writes roundsWon
+  updateFirebaseState(true);
   updateRoundPips();
   playRoundWin();
 
@@ -578,21 +593,24 @@ function handleRoundLoss(reason) {
 }
 
 function showInterRound(iWon, reason) {
-  // Stop game timers
   clearAllTimers();
   state = 'RESULT';
-
-  // Clear body effects
   document.body.classList.remove('zen-mode', 'mimic-mode', 'sudden-death-mode');
   wipeTargets();
 
-  UI.interRoundResult.innerText = iWon ? 'ROUND WON' : 'ROUND LOST';
+  const roundJustPlayed = myRoundsWon + oppRoundsWon;  // total rounds completed
+  const nextRound = roundJustPlayed + 1;
+  const totalRounds = ROUNDS_TO_WIN * 2 - 1; // max 5
+
+  // Update inter-round overlay
+  const roundLabel = document.getElementById('inter-round-label');
+  if (roundLabel) roundLabel.innerText = `ROUND ${roundJustPlayed} OVER  //  NEXT: ROUND ${nextRound}`;
+
+  UI.interRoundResult.innerText = iWon ? '▲ ROUND WON' : '▼ ROUND LOST';
   UI.interRoundResult.style.color = iWon ? 'var(--green)' : 'var(--red)';
-  UI.interRoundScore.innerText = `${myRoundsWon} — ${oppRoundsWon}`;
+  UI.interRoundScore.innerText = `you ${myRoundsWon}  —  opp ${oppRoundsWon}   (first to ${ROUNDS_TO_WIN} wins)`;
 
-  // Sync inter-hack options to current selection
   syncInterHackOptions();
-
   UI.interRoundOverlay.classList.remove('hidden');
 
   let countdown = 5;
@@ -611,9 +629,21 @@ function showInterRound(iWon, reason) {
 
 function startNextRound() {
   UI.interRoundOverlay.classList.add('hidden');
-  // Reset round-specific state
   resetRoundState();
+  // Reset per-round score/streak but keep roundsWon
+  streak = 0;
+  score = 0;
+  perfectStreak = 0;
+  currentLevelIdx = 0;
+  updateSidebar();
+  updateRoundBadge();
   startGame();
+}
+
+function updateRoundBadge() {
+  if (!isOnline) return;
+  const roundNum = myRoundsWon + oppRoundsWon + 1;
+  UI.modeBadge.innerText = `online · round ${roundNum} of ${ROUNDS_TO_WIN * 2 - 1}`;
 }
 
 function showMatchResult(iWon) {
@@ -627,9 +657,12 @@ function showMatchResult(iWon) {
   flashScreen(iWon ? 'white' : 'red');
   if (iWon) playRoundWin(); else playRoundLose();
 
-  UI.targetStatus.innerText = iWon ? 'victory.' : 'defeated.';
-  UI.statusPanel.innerText = iWon ? `match won ${myRoundsWon}–${oppRoundsWon}` : `match lost ${myRoundsWon}–${oppRoundsWon}`;
+  UI.targetStatus.innerText = iWon ? 'VICTORY' : 'DEFEATED';
+  UI.statusPanel.innerText = iWon
+    ? `match won  ${myRoundsWon} – ${oppRoundsWon}`
+    : `match lost  ${myRoundsWon} – ${oppRoundsWon}`;
   UI.statusPanel.style.color = iWon ? 'var(--green)' : 'var(--red)';
+  UI.modeBadge.innerText = iWon ? '🏆 match complete' : '💀 match over';
 
   updateFirebaseState(iWon);
 
@@ -1265,6 +1298,7 @@ function enterGameMode(online) {
     UI.mainBtn.style.opacity = '0';
 
     resetMatchState();
+    updateRoundBadge();   // show "online · round 1 of 5" from the start
     startPingLoop();
     setupPingResponder();
     startGame();

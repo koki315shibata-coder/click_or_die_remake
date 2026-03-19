@@ -104,19 +104,22 @@
     <!-- Inter-Round Overlay (5-second interval between rounds) -->
     <div id="inter-round-overlay" class="hidden">
       <div id="inter-round-content">
+        <div id="inter-round-label" style="color:var(--text-muted); font-size:0.8rem; letter-spacing:2px; text-transform:uppercase;"></div>
         <div id="inter-round-result"></div>
         <div id="inter-round-score"></div>
         
         <div id="inter-loadout-selector">
-          <p class="inter-loadout-label">> CHANGE HACK:</p>
+          <p class="inter-loadout-label">> CHANGE HACK FOR NEXT ROUND:</p>
           <div style="display:flex; gap:20px; justify-content:center; flex-wrap:wrap;">
             <span class="hack-option inter-hack-option active" data-hack="overload">[ OVERLOAD ]</span>
             <span class="hack-option inter-hack-option" data-hack="timeshift">[ TIMESHIFT ]</span>
             <span class="hack-option inter-hack-option" data-hack="mimic">[ MIMIC ]</span>
           </div>
+          <p style="color:var(--text-muted); font-size:0.7rem; margin-top:12px; text-align:center;">OVERLOAD: floods fakes · TIMESHIFT: cuts time · MIMIC: flips colors</p>
         </div>
         
         <div id="inter-round-countdown">
+          <p style="color:var(--text-muted); font-size:0.75rem; margin-bottom:4px;">next round starts in</p>
           <span id="inter-round-timer">5</span>
         </div>
       </div>
