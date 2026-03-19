@@ -1693,18 +1693,34 @@ function returnToLobby() {
   clearAllTimers();
   if (interRoundTimer) { clearInterval(interRoundTimer); interRoundTimer = null; }
   stopPingLoop();
+  
+  // Wipe all match state globally so next match is clean
   matchOver = false;
-  document.body.classList.remove('zen-mode', 'mimic-mode', 'sudden-death-mode');
-  UI.interRoundOverlay.classList.add('hidden');
+  currentOnlineRound = 1;
+  roundResultHandled = false;
+  resetRoundState();
+  resetRoundScores();
+  
+  if (UI.interRoundOverlay) UI.interRoundOverlay.classList.add('hidden');
+  if (UI.flashOverlay) UI.flashOverlay.className = '';
 
   if (myPlayerRef) update(myPlayerRef, { ready: false, alive: true, streak: 0, roundsWon: 0 });
-  // Both host AND guest must reset game state — host clears the room state
+  
+  // Both host AND guest must reset game state — host clears the entire room
   if (roomRef) {
     if (isHost) {
-      update(roomRef, { state: 'lobby', gameStarted: false,
-        hackTarget: null, hackType: null, hackId: null });
+      update(roomRef, { 
+        state: 'lobby', 
+        gameStarted: false,
+        countdownEnd: null,
+        roundResult: null,
+        currentRound: null,
+        hackTarget: null, 
+        hackType: null, 
+        hackId: null 
+      });
     } else {
-      // Guest: If host already left, still try to clean up starting state
+      // Guest: If host already left or hasn't reset it yet, ensure we don't hold the lock
       update(roomRef, { gameStarted: false });
     }
   }
@@ -1712,7 +1728,6 @@ function returnToLobby() {
   showScreen('screen-lobby');
   state = 'START';
   resetGameState();
-  resetRoundScores();
 }
 
 // =============================================
