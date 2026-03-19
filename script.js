@@ -44,19 +44,19 @@ let bestScore = localStorage.getItem('cod_best_score') || null;
 
 let waitTimeout = null;
 let fireTimeout = null;
-let holdTimeout = null;
 let doubleTimeout = null;
 let autoNextTimeout = null;
 let startTime = 0;
 
-let queuedAttack = null;
 let speedModifier = 1.0;
 let speedModRounds = 0;
 
-let doublePending = false;
-let holdActive = false;
-
 let globalSeed = Math.floor(Math.random() * 1000000);
+
+let equippedHack = 'overload';
+
+let perfectStreak = 0;
+let isZenMode = false;
 
 // --- SEEDED RANDOM ---
 function seededRandom() {
@@ -81,7 +81,7 @@ const UI = {
   levelDisplay: document.getElementById('level-display'),
   threatDisplay: document.getElementById('threat-display'),
   bestScore: document.getElementById('best-score'),
-  lastScore: document.getElementById('last-score'),
+  scoreCounter: document.getElementById('score-counter'),
   streakCounter: document.getElementById('streak-counter'),
   modeBadge: document.getElementById('mode-badge'),
   resultDisplay: document.getElementById('result-display'),
@@ -94,7 +94,8 @@ const UI = {
   clickLayer: document.getElementById('click-layer'),
   btnQuit: document.getElementById('btn-quit'),
   centerAlerts: document.getElementById('center-alert-container'),
-  bestContainer: document.getElementById('best-stat-container')
+  gameOverScreen: document.getElementById('game-over-screen'),
+  gameOverScore: document.getElementById('go-score')
 };
 
 // Online UI
@@ -114,7 +115,8 @@ const Lobby = {
   btnStart: document.getElementById('btn-start-game'),
   hostMessage: document.getElementById('host-message'),
   btnLeave: document.getElementById('btn-leave-lobby'),
-  countdown: document.getElementById('countdown-text')
+  countdown: document.getElementById('countdown-text'),
+  hackOptions: document.querySelectorAll('.hack-option')
 };
 
 const OppUI = {
@@ -148,7 +150,16 @@ function playTone(freq, type, duration, vol = 0.1) {
 
 function playLockOn() { playTone(800, 'sine', 0.1, 0.05); }
 function playFire() { playTone(200, 'square', 0.2, 0.2); playTone(150, 'sawtooth', 0.3, 0.2); }
-function playSuccess() { playTone(600, 'sine', 0.1, 0.1); setTimeout(() => playTone(800, 'sine', 0.3, 0.1), 100); }
+function playSuccess() { 
+  if (isZenMode) {
+    let baseFreq = 800 + Math.min(streak * 30, 1500); 
+    playTone(baseFreq, 'sine', 0.1, 0.15); 
+    setTimeout(() => playTone(baseFreq * 1.25, 'sine', 0.3, 0.15), 50);
+  } else {
+    playTone(600, 'sine', 0.1, 0.1); 
+    setTimeout(() => playTone(800, 'sine', 0.3, 0.1), 100); 
+  }
+}
 function playFail() { playTone(100, 'sawtooth', 0.5, 0.2); }
 let beepInterval = null;
 
@@ -245,8 +256,6 @@ function setupRoomListeners() {
     if (!data) return; // Room closed
 
     console.log('[Firebase] Room snapshot received. State:', data.state, '| gameStarted:', data.gameStarted);
-
-    globalSeed = data.seed;
 
     if (data.players) {
       const players = Object.keys(data.players);
@@ -399,10 +408,10 @@ function startCountdown(endTime) {
 // --- MAIN GAME LOGIC ---
 function getLevelParams(idx) {
   const baseLevels = [
-    { name: 'recruit', window: 1200, threat: 'too easy' },
-    { name: 'soldier', window: 1000, threat: 'mild' },
-    { name: 'veteran', window: 800, threat: 'getting warm' },
-    { name: 'elite', window: 650, threat: 'intense' },
+    { name: 'recruit', window: 1500, threat: 'too easy' },
+    { name: 'soldier', window: 1200, threat: 'mild' },
+    { name: 'veteran', window: 900, threat: 'getting warm' },
+    { name: 'elite', window: 700, threat: 'intense' },
     { name: 'omega', window: 500, threat: 'lethal' }
   ];
 
@@ -441,6 +450,7 @@ function getCommand(actualLevel) {
 }
 
 function resetUI() {
+  UI.gameOverScreen.classList.add('hidden');
   UI.resultDisplay.classList.add('hidden');
   document.body.classList.remove('screen-shake');
   UI.flashOverlay.className = '';
@@ -532,8 +542,11 @@ function startWaitPhase() {
 
   // --- Target Positioning Phase ---
   const tw = document.getElementById('target-wrapper');
+  let activePositions = [];
+  
   if (currentLevelIdx >= 1) {
-    const p1 = getRandomPos(currentLevelIdx);
+    const p1 = getRandomPos(currentLevelIdx, activePositions);
+    activePositions.push(p1);
     tw.style.transition = 'transform 0.4s ease-out';
     tw.style.transform = `translate(calc(-50% + ${p1.x}px), calc(-50% + ${p1.y}px))`;
   } else {
@@ -543,7 +556,7 @@ function startWaitPhase() {
 
   if (currentLevelIdx >= 1) {
     let decoyCount = Math.min(6, currentLevelIdx + 1);
-    spawnDecoys(decoyCount, currentLevelIdx);
+    spawnDecoys(decoyCount, currentLevelIdx, activePositions);
   }
   // --------------------------------
 
@@ -571,7 +584,7 @@ function spawnFloatingText(e, text, color) {
   setTimeout(() => el.remove(), 1000);
 }
 
-function getRandomPos(level) {
+function getRandomPos(level, existingPositions = []) {
   const tSize = 100;
   const maxW = window.innerWidth - tSize - 40;
   const maxH = window.innerHeight - tSize - 160;
@@ -579,19 +592,38 @@ function getRandomPos(level) {
   const spreadX = maxW / 2;
   const spreadY = maxH / 2;
   
-  const x = (seededRandom() * spreadX * 2) - spreadX;
-  const y = (seededRandom() * spreadY * 2) - spreadY;
+  const minDist = 110; 
+  let x, y;
+  let attempts = 0;
+  let valid = false;
+  
+  while (!valid && attempts < 50) {
+    x = (seededRandom() * spreadX * 2) - spreadX;
+    y = (seededRandom() * spreadY * 2) - spreadY;
+    
+    valid = true;
+    for (const pos of existingPositions) {
+      const dx = x - pos.x;
+      const dy = y - pos.y;
+      if (Math.sqrt(dx*dx + dy*dy) < minDist) {
+        valid = false;
+        break;
+      }
+    }
+    attempts++;
+  }
   
   return {x, y};
 }
 
-function spawnDecoys(count, level) {
+function spawnDecoys(count, level, existingPositions) {
   for(let i=0; i<count; i++) {
     const decoy = document.createElement('div');
     decoy.className = 'fake-target';
     
     // Spawn in center and slide out during wait phase
-    const p = getRandomPos(level);
+    const p = getRandomPos(level, existingPositions);
+    existingPositions.push(p);
     
     decoy.style.transition = 'none';
     decoy.style.transform = `translate(-50%, -50%)`;
@@ -636,7 +668,7 @@ function firePhase() {
   activeTarget = {
     id: Date.now() + Math.random(),
     spawnedAt: performance.now(),
-    allowedTime: currentLevel.window + 80,
+    allowedTime: currentLevel.window,
     resolved: false
   };
   const tid = activeTarget.id;
@@ -683,7 +715,6 @@ function successGame() {
 
   updateSelectorUI();
   updateBestScore();
-  UI.lastScore.innerText = rt + 'ms';
 
   showResult(rt, null);
   updateSidebar();
@@ -741,27 +772,56 @@ function wipeTargets() {
   clearTemporaryFeedback();
 }
 
+function activateZenMode() {
+  isZenMode = true;
+  document.body.classList.add('zen-mode');
+  flashScreen('white');
+  document.body.classList.add('screen-shake');
+  spawnFloatingText(null, 'ZONE ENTERED', '#ffd700');
+  playTone(1000, 'square', 0.5, 0.2);
+}
+
 function grantScore(e, elapsed, basePoints, typeText) {
   let isPerfect = elapsed < 200;
+  
+  if (isPerfect) {
+    perfectStreak++;
+    if (perfectStreak >= 5 && !isZenMode) activateZenMode();
+  } else {
+    perfectStreak = 0; 
+    if (isZenMode) {
+      isZenMode = false;
+      document.body.classList.remove('zen-mode');
+      spawnFloatingText(e, 'ZONE LOST', 'var(--text-muted)');
+    }
+  }
+
   if (isPerfect && basePoints > 0) basePoints += 1; 
-  let pMult = (streak >= 10) ? 2.0 : (streak >= 5) ? 1.5 : 1.0;
+
+  let pMult = isZenMode ? 5.0 : ((streak >= 10) ? 2.0 : (streak >= 5) ? 1.5 : 1.0);
   let pts = Math.floor(basePoints * pMult);
   score += pts;
   
-  let tColor = isPerfect ? '#ff00ff' : 'var(--green)';
-  let pre = isPerfect ? `PERFECT x${pMult}! ` : (pMult > 1.0 ? `x${pMult} ` : '');
+  let tColor = isZenMode ? '#ffd700' : (isPerfect ? '#ff00ff' : 'var(--green)');
+  let pre = isZenMode ? `ZEN x5.0! ` : (isPerfect ? `PERFECT x${pMult}! ` : (pMult > 1.0 ? `x${pMult} ` : ''));
   let tText = `${pre}${typeText} +${pts}`;
   
   spawnFloatingText(e, tText, tColor);
 }
 
+function resetScores() {
+  streak = 0;
+  score = 0;
+  perfectStreak = 0;
+  isZenMode = false;
+  document.body.classList.remove('zen-mode');
+  speedModRounds = 0;
+  speedModifier = 1.0;
+}
+
 function resetGameState() {
   clearAllTimers(); 
   activeTarget.resolved = true;
-  streak = 0;
-  score = 0;
-  speedModRounds = 0;
-  speedModifier = 1.0;
   const activeBtn = Array.from(UI.diffBtns).find(b => b.classList.contains('active'));
   currentLevelIdx = activeBtn ? parseInt(activeBtn.dataset.level) - 1 : 0;
   wipeTargets();
@@ -794,6 +854,10 @@ function winGame(reason) {
 }
 
 function failGame(reason) {
+  isZenMode = false;
+  perfectStreak = 0;
+  document.body.classList.remove('zen-mode');
+  
   resetGameState();
 
   UI.diffContainer.style.opacity = '1';
@@ -807,11 +871,12 @@ function failGame(reason) {
   flashScreen('red');
   playFail();
 
-  UI.targetStatus.innerText = 'you died.';
+  UI.targetStatus.innerText = '';
   UI.statusPanel.innerText = reason;
   UI.statusPanel.style.color = 'var(--red)';
 
-  showTemporaryFeedback(`SCORE: ${score}`, 'rank-slow', reason, 600);
+  UI.gameOverScore.innerText = score;
+  UI.gameOverScreen.classList.remove('hidden');
 
   updateFirebaseState(false);
   updateSelectorUI();
@@ -855,13 +920,8 @@ function updateSidebar() {
   UI.threatDisplay.innerText = lvlParams.threat;
 
   if (bestScoreAmt) UI.bestScore.innerText = bestScoreAmt + ' pts';
-  UI.streakCounter.innerText = score;
-  
-  const scLabel = document.getElementById('streak-counter').previousElementSibling;
-  if (scLabel) scLabel.innerText = 'SCORE';
-  
-  const bLabel = document.getElementById('best-score').previousElementSibling;
-  if (bLabel) bLabel.innerText = 'BEST SCORE';
+  if (UI.scoreCounter) UI.scoreCounter.innerText = score;
+  UI.streakCounter.innerText = streak;
 }
 
 function updateSelectorUI() {
@@ -892,6 +952,7 @@ function enterGameMode(online) {
     UI.btnQuit.classList.remove('hidden');
     UI.mainBtn.classList.remove('hidden');
     state = 'START';
+    resetScores();
     resetUI();
     updateSidebar();
   }
@@ -943,6 +1004,9 @@ function handleInputDown(e) {
   if (state === 'START' || state === 'RESULT') {
     if (state === 'RESULT' && performance.now() - resultStartTime < 300) return;
     if (!isOnline) {
+      if (state === 'RESULT') {
+        resetScores();
+      }
       startGame();
     } else {
       if (myPlayerRef) update(myPlayerRef, { ready: false, alive: true, streak: 0 });
@@ -997,12 +1061,23 @@ UI.clickLayer.addEventListener('touchstart', handleBackgroundClick, { passive: f
 UI.mainBtn.addEventListener('mousedown', handleInputDown);
 UI.mainBtn.addEventListener('touchstart', handleInputDown, { passive: false });
 
+// Hack Loadout Selection
+Lobby.hackOptions.forEach(opt => {
+  opt.addEventListener('click', (e) => {
+    Lobby.hackOptions.forEach(o => o.classList.remove('active'));
+    e.target.classList.add('active');
+    equippedHack = e.target.getAttribute('data-hack');
+  });
+});
+
 UI.diffBtns.forEach(btn => {
   const handler = (e) => {
     e.stopPropagation();
     if (state !== 'START' && state !== 'RESULT') return;
     currentLevelIdx = parseInt(e.target.dataset.level) - 1;
-    streak = 0; updateSelectorUI(); updateSidebar();
+    resetScores(); 
+    updateSelectorUI(); 
+    updateSidebar();
     if (state === 'RESULT') {
       UI.gameArea.className = 'state-start';
       UI.targetStatus.innerText = 'one miss and it ends.';

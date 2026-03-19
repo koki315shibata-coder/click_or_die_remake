@@ -40,6 +40,16 @@
 
       <div id="room-info" class="hidden" style="width:100%">
         <p class="subtitle">room code: <strong id="display-room-code" style="color:var(--text-main); font-size:1.5rem; letter-spacing:4px">----</strong></p>
+        
+        <div id="loadout-selector" style="margin:30px 0; border:1px solid #333; padding:20px; text-align:center; background:rgba(0,0,0,0.5);">
+          <p style="color:var(--text-muted); font-size:0.9rem; margin:0 0 15px 0;">> PRE-MATCH LOADOUT // SELECT HACK:</p>
+          <div style="display:flex; gap:20px; justify-content:center; flex-wrap:wrap;">
+             <span class="hack-option active" data-hack="overload">[ OVERLOAD ]</span>
+             <span class="hack-option" data-hack="timeshift">[ TIMESHIFT ]</span>
+             <span class="hack-option" data-hack="mimic">[ MIMIC ]</span>
+          </div>
+        </div>
+
         <div class="players-status">
           <div class="player-slot" id="p1-slot">you: <span class="status">waiting...</span></div>
           <div class="player-slot" id="p2-slot">opponent: <span class="status">waiting...</span></div>
@@ -56,13 +66,16 @@
 
   <!-- GAME INTERFACE -->
   <div id="screen-game" class="screen hidden">
-    <header>
+    <header id="top-header">
       <div class="brand">
         <h1>click or die.</h1>
         <p id="mode-badge" class="subtitle">offline mode</p>
       </div>
       
-      <div style="display:flex; gap:40px;">
+      <div style="display:flex; gap:40px; align-items:center;">
+          <!-- Ping Display (Online only) -->
+          <div id="ping-display" class="hidden" style="color:var(--text-muted); font-family:var(--font-mono); font-size:0.9rem;">[ Ping: --ms ]</div>
+
           <!-- Opponent stats (Online only) -->
           <div id="opp-stats" class="stats hidden">
             <div class="stat"><span class="label">opp streak</span><span class="value opp-color" id="opp-streak-counter">0</span></div>
@@ -70,9 +83,9 @@
           </div>
     
           <!-- Player stats -->
-          <div class="stats">
+          <div class="stats" style="gap:20px;">
             <div class="stat" id="best-stat-container"><span class="label">best</span><span class="value" id="best-score">--</span></div>
-            <div class="stat"><span class="label">last</span><span class="value" id="last-score">--</span></div>
+            <div class="stat"><span class="label">score</span><span class="value" id="score-counter">0</span></div>
             <div class="stat"><span class="label">streak</span><span class="value" id="streak-counter">0</span></div>
           </div>
       </div>
@@ -90,6 +103,12 @@
       <div class="result-display hidden" id="result-display">
         <div id="result-time"></div>
         <div id="result-rank"></div>
+      </div>
+      
+      <div id="game-over-screen" class="hidden">
+        <h1 class="go-title">YOU DIED</h1>
+        <p class="subtitle">FINAL SCORE</p>
+        <h2 id="go-score">0</h2>
       </div>
     </main>
 
