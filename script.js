@@ -1,6 +1,6 @@
 import { initializeApp } from "https://www.gstatic.com/firebasejs/12.10.0/firebase-app.js";
 import { getAuth, signInAnonymously } from "https://www.gstatic.com/firebasejs/12.10.0/firebase-auth.js";
-import { getDatabase, ref, set, get, update, remove, onValue } from "https://www.gstatic.com/firebasejs/12.10.0/firebase-database.js";
+import { getDatabase, ref, set, get, update, remove, onValue, serverTimestamp } from "https://www.gstatic.com/firebasejs/12.10.0/firebase-database.js";
 
 const firebaseConfig = {
   apiKey: "AIzaSyBHXbceS4jq3XvnBHZL7VakG5C_-8lzpAo",
@@ -13,7 +13,9 @@ const firebaseConfig = {
   databaseURL: "https://click-or-die-default-rtdb.firebaseio.com"
 };
 
-// Global Modes & States
+// =============================================
+// GLOBAL STATE
+// =============================================
 let isOnline = false;
 let db = null;
 let auth = null;
@@ -21,12 +23,9 @@ let authUser = null;
 let roomCode = null;
 let isHost = false;
 let myPlayerRef = null;
-let oppPlayerRef = null;
 let roomRef = null;
 
 let state = 'START'; // START, COUNTDOWN, WAIT, FIRE, RESULT
-let currentCommand = 'fire'; 
-let currentModifier = 'normal'; 
 let currentLevelIdx = 0;
 let streak = 0;
 let score = 0;
@@ -37,28 +36,47 @@ let activeTarget = { id: null, spawnedAt: 0, allowedTime: 0, resolved: true };
 let resultStartTime = 0;
 let feedbackTimeout = null;
 
-function getModifier(level) {
-  return 'normal';
-}
-let bestScore = localStorage.getItem('cod_best_score') || null;
-
 let waitTimeout = null;
 let fireTimeout = null;
+let holdTimeout = null;
 let doubleTimeout = null;
 let autoNextTimeout = null;
+let beepInterval = null;
 let startTime = 0;
 
+// Speed modifier (used by TIMESHIFT hack)
 let speedModifier = 1.0;
 let speedModRounds = 0;
 
+// Seeded random for fair sync
 let globalSeed = Math.floor(Math.random() * 1000000);
 
+// --- Hack / ZEN system ---
 let equippedHack = 'overload';
-
 let perfectStreak = 0;
 let isZenMode = false;
+let hackFiredThisZen = false; // prevent double-fire
 
-// --- SEEDED RANDOM ---
+// --- BO5 Match Format ---
+let myRoundsWon = 0;
+let oppRoundsWon = 0;
+const ROUNDS_TO_WIN = 3;
+let interRoundTimer = null;
+let matchOver = false;
+
+// --- Incoming hack state (applied next round) ---
+let pendingOverload = 0;      // extra decoy count
+let pendingTimeshift = false; // window shrunken
+let pendingMimic = false;     // colors flipped
+let parryWindowActive = false;// firewall opportunity
+
+// --- Ping ---
+let pingInterval = null;
+let lastPingSent = 0;
+
+// =============================================
+// SEEDED RANDOM
+// =============================================
 function seededRandom() {
   let t = globalSeed += 0x6D2B79F5;
   t = Math.imul(t ^ (t >>> 15), t | 1);
@@ -66,7 +84,9 @@ function seededRandom() {
   return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
 }
 
-// --- DOM ELEMENTS ---
+// =============================================
+// DOM ELEMENTS
+// =============================================
 const screens = {
   menu: document.getElementById('screen-menu'),
   lobby: document.getElementById('screen-lobby'),
@@ -95,10 +115,17 @@ const UI = {
   btnQuit: document.getElementById('btn-quit'),
   centerAlerts: document.getElementById('center-alert-container'),
   gameOverScreen: document.getElementById('game-over-screen'),
-  gameOverScore: document.getElementById('go-score')
+  gameOverScore: document.getElementById('go-score'),
+  pingDisplay: document.getElementById('ping-display'),
+  roundScoreboard: document.getElementById('round-scoreboard'),
+  myRoundPips: document.getElementById('my-round-pips'),
+  oppRoundPips: document.getElementById('opp-round-pips'),
+  interRoundOverlay: document.getElementById('inter-round-overlay'),
+  interRoundResult: document.getElementById('inter-round-result'),
+  interRoundScore: document.getElementById('inter-round-score'),
+  interRoundTimer: document.getElementById('inter-round-timer')
 };
 
-// Online UI
 const Lobby = {
   btnOffline: document.getElementById('btn-offline'),
   btnOnline: document.getElementById('btn-online'),
@@ -116,7 +143,8 @@ const Lobby = {
   hostMessage: document.getElementById('host-message'),
   btnLeave: document.getElementById('btn-leave-lobby'),
   countdown: document.getElementById('countdown-text'),
-  hackOptions: document.querySelectorAll('.hack-option')
+  hackOptions: document.querySelectorAll('.hack-option'),
+  interHackOptions: document.querySelectorAll('.inter-hack-option')
 };
 
 const OppUI = {
@@ -125,7 +153,10 @@ const OppUI = {
   state: document.getElementById('opp-state-text')
 };
 
-// --- AUDIO ---
+
+// =============================================
+// AUDIO
+// =============================================
 const AudioContext = window.AudioContext || window.webkitAudioContext;
 let audioCtx;
 
@@ -150,20 +181,43 @@ function playTone(freq, type, duration, vol = 0.1) {
 
 function playLockOn() { playTone(800, 'sine', 0.1, 0.05); }
 function playFire() { playTone(200, 'square', 0.2, 0.2); playTone(150, 'sawtooth', 0.3, 0.2); }
-function playSuccess() { 
+function playSuccess() {
   if (isZenMode) {
-    let baseFreq = 800 + Math.min(streak * 30, 1500); 
-    playTone(baseFreq, 'sine', 0.1, 0.15); 
+    let baseFreq = 800 + Math.min(streak * 30, 1500);
+    playTone(baseFreq, 'sine', 0.1, 0.15);
     setTimeout(() => playTone(baseFreq * 1.25, 'sine', 0.3, 0.15), 50);
   } else {
-    playTone(600, 'sine', 0.1, 0.1); 
-    setTimeout(() => playTone(800, 'sine', 0.3, 0.1), 100); 
+    playTone(600, 'sine', 0.1, 0.1);
+    setTimeout(() => playTone(800, 'sine', 0.3, 0.1), 100);
   }
 }
 function playFail() { playTone(100, 'sawtooth', 0.5, 0.2); }
-let beepInterval = null;
+function playHackLaunch() {
+  playTone(1200, 'square', 0.1, 0.15);
+  setTimeout(() => playTone(900, 'sawtooth', 0.3, 0.2), 80);
+  setTimeout(() => playTone(600, 'square', 0.4, 0.25), 180);
+}
+function playIntrusion() {
+  playTone(300, 'sawtooth', 0.2, 0.3);
+  setTimeout(() => playTone(250, 'square', 0.3, 0.3), 150);
+}
+function playFirewall() {
+  playTone(1000, 'sine', 0.05, 0.2);
+  setTimeout(() => playTone(1500, 'sine', 0.1, 0.15), 100);
+}
+function playRoundWin() {
+  playTone(600, 'sine', 0.1, 0.15);
+  setTimeout(() => playTone(800, 'sine', 0.15, 0.15), 120);
+  setTimeout(() => playTone(1000, 'sine', 0.2, 0.3), 250);
+}
+function playRoundLose() {
+  playTone(200, 'sawtooth', 0.3, 0.4);
+  setTimeout(() => playTone(150, 'sawtooth', 0.4, 0.4), 300);
+}
 
-// --- NAVIGATION ---
+// =============================================
+// NAVIGATION
+// =============================================
 function showScreen(id) {
   Object.values(screens).forEach(s => {
     s.classList.remove('active');
@@ -173,7 +227,9 @@ function showScreen(id) {
   document.getElementById(id).classList.add('active');
 }
 
-// --- FIREBASE INIT (Modular) ---
+// =============================================
+// FIREBASE INIT
+// =============================================
 async function initFirebase() {
   if (!db) {
     try {
@@ -192,7 +248,9 @@ async function initFirebase() {
   return true;
 }
 
-// --- LOBBY LOGIC ---
+// =============================================
+// LOBBY LOGIC
+// =============================================
 function makeId(length) {
   let result = '';
   const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ';
@@ -213,7 +271,7 @@ async function createRoom() {
   });
 
   myPlayerRef = ref(db, 'rooms/' + roomCode + '/players/' + authUser.uid);
-  await set(myPlayerRef, { ready: false, streak: 0, alive: true });
+  await set(myPlayerRef, { ready: false, streak: 0, alive: true, roundsWon: 0 });
 
   setupRoomListeners();
   showLobbyInfo();
@@ -233,7 +291,7 @@ async function joinRoom(code) {
   }
 
   myPlayerRef = ref(db, 'rooms/' + roomCode + '/players/' + authUser.uid);
-  await set(myPlayerRef, { ready: false, streak: 0, alive: true });
+  await set(myPlayerRef, { ready: false, streak: 0, alive: true, roundsWon: 0 });
 
   setupRoomListeners();
   showLobbyInfo();
@@ -243,7 +301,6 @@ function showLobbyInfo() {
   Lobby.selection.classList.add('hidden');
   Lobby.info.classList.remove('hidden');
   Lobby.codeDisplay.innerText = roomCode;
-  
   Lobby.btnStart.classList.add('hidden');
   Lobby.btnStart.disabled = false;
   Lobby.hostMessage.classList.add('hidden');
@@ -253,9 +310,7 @@ function showLobbyInfo() {
 function setupRoomListeners() {
   onValue(roomRef, snap => {
     const data = snap.val();
-    if (!data) return; // Room closed
-
-    console.log('[Firebase] Room snapshot received. State:', data.state, '| gameStarted:', data.gameStarted);
+    if (!data) return;
 
     if (data.players) {
       const players = Object.keys(data.players);
@@ -267,14 +322,21 @@ function setupRoomListeners() {
 
       if (oppData) {
         Lobby.p2Slot.innerHTML = `opponent: <span class="status ${oppData.ready ? 'ready' : ''}">${oppData.ready ? 'READY' : 'WAITING...'}</span>`;
-        OppUI.streak.innerText = oppData.score || 0;
+        OppUI.streak.innerText = oppData.streak || 0;
         OppUI.state.innerText = oppData.alive ? 'alive' : 'dead';
         OppUI.state.style.color = oppData.alive ? 'var(--text-muted)' : 'var(--red)';
 
-        // Handle multiplayer progression events
+        // Sync opponent round wins
+        const oppWins = oppData.roundsWon || 0;
+        if (oppWins !== oppRoundsWon) {
+          oppRoundsWon = oppWins;
+          updateRoundPips();
+        }
+
+        // Round resolution: detect opponent death during play
         if (data.state === 'playing') {
-          if (!oppData.alive && myData.alive && state !== 'RESULT') {
-            winGame("opponent eliminated.");
+          if (!oppData.alive && myData.alive && state !== 'RESULT' && !matchOver) {
+            handleRoundWin("opponent eliminated.");
           }
         }
       } else {
@@ -283,20 +345,18 @@ function setupRoomListeners() {
 
       if (data.state === 'lobby') {
         const allReady = players.length === 2 && Object.values(data.players).every(p => p.ready);
-        
+
         if (players.length === 2 && !myData.ready) {
-           Lobby.btnReady.classList.remove('hidden');
+          Lobby.btnReady.classList.remove('hidden');
         } else {
-           Lobby.btnReady.classList.add('hidden');
+          Lobby.btnReady.classList.add('hidden');
         }
 
-        // Handle Host Privilege Recovery & Auto-Promotion
+        // Host privilege
         if (data.host === authUser.uid) {
           isHost = true;
         } else if (players.length > 0 && !players.includes(data.host)) {
-          // If the original host left the room completely, promote the first active player
           if (players[0] === authUser.uid) {
-            console.log('[Lobby] Original host missing. Auto-promoting to host.');
             isHost = true;
             update(roomRef, { host: authUser.uid });
           } else {
@@ -307,146 +367,324 @@ function setupRoomListeners() {
         }
 
         if (players.length < 2) {
-           Lobby.hostMessage.innerText = 'waiting for second player...';
-           Lobby.hostMessage.classList.remove('hidden');
-           Lobby.btnStart.classList.add('hidden');
+          Lobby.hostMessage.innerText = 'waiting for second player...';
+          Lobby.hostMessage.classList.remove('hidden');
+          Lobby.btnStart.classList.add('hidden');
         } else if (!allReady) {
-           Lobby.hostMessage.innerText = 'waiting for players to ready up...';
-           Lobby.hostMessage.classList.remove('hidden');
-           Lobby.btnStart.classList.add('hidden');
+          Lobby.hostMessage.innerText = 'waiting for players to ready up...';
+          Lobby.hostMessage.classList.remove('hidden');
+          Lobby.btnStart.classList.add('hidden');
         } else if (allReady) {
-           if (isHost) {
-              Lobby.hostMessage.innerText = 'both players ready. press start game.';
-              Lobby.hostMessage.classList.remove('hidden');
-              Lobby.btnStart.classList.remove('hidden');
-              Lobby.btnStart.disabled = false;
-           } else {
-              Lobby.hostMessage.innerText = 'waiting for host to start the game.';
-              Lobby.hostMessage.classList.remove('hidden');
-              Lobby.btnStart.classList.add('hidden');
-           }
+          if (isHost) {
+            Lobby.hostMessage.innerText = 'both players ready. press start game.';
+            Lobby.hostMessage.classList.remove('hidden');
+            Lobby.btnStart.classList.remove('hidden');
+            Lobby.btnStart.disabled = false;
+          } else {
+            Lobby.hostMessage.innerText = 'waiting for host to start the game.';
+            Lobby.hostMessage.classList.remove('hidden');
+            Lobby.btnStart.classList.add('hidden');
+          }
         }
       }
 
       const isStarting = data.state === 'starting' || data.gameStarted === true;
       if (isStarting && state !== 'WAIT' && state !== 'FIRE') {
-        console.log('[Lobby] Transitioning to start countdown. Target:', data.countdownEnd);
         Lobby.hostMessage.classList.add('hidden');
         Lobby.btnStart.classList.add('hidden');
         if (Lobby.countdown.classList.contains('hidden')) {
-          console.log('[Lobby] Initiating startCountdown function natively.');
           startCountdown(data.countdownEnd);
         }
       }
     }
 
-    // Attack Queueing logic
-    if (data.attackTarget === authUser.uid && data.attackId) {
-      handleReceivedAttack(data.attackType, data.attackId);
+    // Incoming hack
+    if (data.hackTarget === authUser.uid && data.hackId) {
+      handleReceivedHack(data.hackType, data.hackId);
+    }
+
+    // Ping response
+    if (data.pingResponse && data.pingResponse.target === authUser.uid) {
+      const ping = Date.now() - data.pingResponse.sentAt;
+      UI.pingDisplay.innerText = `[ Ping: ${ping}ms ]`;
+      // Color based on quality
+      if (ping < 80) UI.pingDisplay.style.color = 'var(--green)';
+      else if (ping < 150) UI.pingDisplay.style.color = '#fecd1a';
+      else UI.pingDisplay.style.color = 'var(--red)';
     }
   });
 }
 
-let lastAttackId = null;
-function handleReceivedAttack(type, attackId) {
-  if (attackId === lastAttackId) return;
-  lastAttackId = attackId;
 
-  if (type === 'steal') {
-    if (hasShield) {
-      hasShield = false;
-      triggerCenterAlert("shield blocked steal!");
-      UI.modeBadge.innerText = isOnline ? 'online versus' : 'offline mode';
-    } else {
-      streak = Math.max(0, streak - 1);
-      triggerCenterAlert("streak stolen!");
-      updateSidebar();
-      updateFirebaseState(true);
-    }
-    return;
-  }
+// =============================================
+// HACK SEND / RECEIVE
+// =============================================
+let lastHackId = null;
 
-  triggerCenterAlert(`attacked: ${type}!`);
-  if (type === 'fake') queuedAttack = 'ignore';
-  if (type === 'shake') {
-    document.body.classList.add('screen-shake-small');
-    setTimeout(() => document.body.classList.remove('screen-shake-small'), 200);
-  }
-  if (type === 'speed') {
-    speedModifier = 0.75;
-    speedModRounds = 2;
-  }
-}
-
-async function sendAttack(type) {
-  if (!roomRef) return;
-  const oppId = Object.keys((await get(ref(db, 'rooms/' + roomCode + '/players'))).val()).find(id => id !== authUser.uid);
+async function sendHack(type) {
+  if (!roomRef || !db) return;
+  const playersSnap = await get(ref(db, 'rooms/' + roomCode + '/players'));
+  if (!playersSnap.exists()) return;
+  const oppId = Object.keys(playersSnap.val()).find(id => id !== authUser.uid);
+  if (!oppId) return;
   update(roomRef, {
-    attackTarget: oppId || 'all',
-    attackType: type,
-    attackId: Date.now()
+    hackTarget: oppId,
+    hackType: type,
+    hackId: Date.now() + '_' + Math.random()
   });
 }
 
-function startCountdown(endTime) {
-  Lobby.btnReady.classList.add('hidden');
-  Lobby.btnStart.classList.add('hidden');
-  Lobby.hostMessage.classList.add('hidden');
-  Lobby.countdown.classList.remove('hidden');
+function handleReceivedHack(type, hackId) {
+  if (hackId === lastHackId) return;
+  lastHackId = hackId;
 
-  const iv = setInterval(() => {
-    const left = Math.ceil((endTime - Date.now()) / 1000);
-    if (left > 0) {
-      Lobby.countdown.innerText = left;
-    } else {
-      clearInterval(iv);
-      enterGameMode(true);
-    }
-  }, 100);
+  // Firewall (parry) opportunity
+  parryWindowActive = true;
+  pendingParryHackType = type;
+
+  playIntrusion();
+  triggerAlert('⚠ INTRUSION DETECTED', 'firewall-alert');
+
+  // Queue the hack for next round start
+  if (type === 'overload') {
+    pendingOverload = Math.floor(Math.random() * 11) + 10; // 10-20 fakes
+  } else if (type === 'timeshift') {
+    pendingTimeshift = true;
+  } else if (type === 'mimic') {
+    pendingMimic = true;
+  }
 }
 
-// --- MAIN GAME LOGIC ---
+let pendingParryHackType = null;
+
+function attemptParry() {
+  if (!parryWindowActive) return false;
+  parryWindowActive = false;
+  pendingParryHackType = null;
+
+  // Clear the pending hack
+  pendingOverload = 0;
+  pendingTimeshift = false;
+  pendingMimic = false;
+
+  playFirewall();
+  flashScreen('white');
+  triggerAlert('⚡ FIREWALL ACTIVATED', 'firewall-success-alert');
+  return true;
+}
+
+function triggerAlert(text, cssClass) {
+  const el = document.createElement('div');
+  el.className = 'attack-alert ' + (cssClass || '');
+  el.innerText = text;
+  UI.centerAlerts.appendChild(el);
+  setTimeout(() => el.remove(), 2500);
+}
+
+// Legacy alias
+function triggerCenterAlert(text) { triggerAlert(text, ''); }
+
+function showHackExecutedBanner(hackName) {
+  const el = document.createElement('div');
+  el.className = 'hack-executed-banner';
+  el.innerText = `EXECUTED: ${hackName.toUpperCase()}`;
+  document.body.appendChild(el);
+  setTimeout(() => el.remove(), 2200);
+}
+
+// =============================================
+// PING
+// =============================================
+async function measurePing() {
+  if (!roomRef || !authUser) return;
+  lastPingSent = Date.now();
+  update(roomRef, { pingRequest: { from: authUser.uid, sentAt: lastPingSent } });
+}
+
+function startPingLoop() {
+  if (pingInterval) clearInterval(pingInterval);
+  pingInterval = setInterval(measurePing, 5000);
+  measurePing();
+}
+
+function stopPingLoop() {
+  if (pingInterval) clearInterval(pingInterval);
+  pingInterval = null;
+}
+
+// Listen for ping requests from opponent and respond
+function setupPingResponder() {
+  if (!roomRef) return;
+  onValue(ref(db, 'rooms/' + roomCode + '/pingRequest'), snap => {
+    const data = snap.val();
+    if (!data) return;
+    if (data.from !== authUser.uid) {
+      // Respond
+      update(roomRef, { pingResponse: { target: data.from, sentAt: data.sentAt } });
+    }
+  });
+}
+
+// =============================================
+// BO5 ROUND MANAGEMENT
+// =============================================
+function updateRoundPips() {
+  // My pips
+  UI.myRoundPips.innerHTML = '';
+  for (let i = 0; i < ROUNDS_TO_WIN; i++) {
+    const pip = document.createElement('div');
+    pip.className = 'round-pip' + (i < myRoundsWon ? ' won' : '');
+    UI.myRoundPips.appendChild(pip);
+  }
+  // Opp pips
+  UI.oppRoundPips.innerHTML = '';
+  for (let i = 0; i < ROUNDS_TO_WIN; i++) {
+    const pip = document.createElement('div');
+    pip.className = 'round-pip' + (i < oppRoundsWon ? ' won' : '');
+    UI.oppRoundPips.appendChild(pip);
+  }
+}
+
+function handleRoundWin(reason) {
+  if (matchOver) return;
+  myRoundsWon++;
+  updateFirebaseState(true);  // writes roundsWon
+  updateRoundPips();
+  playRoundWin();
+
+  if (myRoundsWon >= ROUNDS_TO_WIN) {
+    matchOver = true;
+    showMatchResult(true);
+  } else {
+    showInterRound(true, reason);
+  }
+}
+
+function handleRoundLoss(reason) {
+  if (matchOver) return;
+  oppRoundsWon++;
+  updateRoundPips();
+  playRoundLose();
+
+  if (oppRoundsWon >= ROUNDS_TO_WIN) {
+    matchOver = true;
+    showMatchResult(false);
+  } else {
+    showInterRound(false, reason);
+  }
+}
+
+function showInterRound(iWon, reason) {
+  // Stop game timers
+  clearAllTimers();
+  state = 'RESULT';
+
+  // Clear body effects
+  document.body.classList.remove('zen-mode', 'mimic-mode', 'sudden-death-mode');
+  wipeTargets();
+
+  UI.interRoundResult.innerText = iWon ? 'ROUND WON' : 'ROUND LOST';
+  UI.interRoundResult.style.color = iWon ? 'var(--green)' : 'var(--red)';
+  UI.interRoundScore.innerText = `${myRoundsWon} — ${oppRoundsWon}`;
+
+  // Sync inter-hack options to current selection
+  syncInterHackOptions();
+
+  UI.interRoundOverlay.classList.remove('hidden');
+
+  let countdown = 5;
+  UI.interRoundTimer.innerText = countdown;
+
+  interRoundTimer = setInterval(() => {
+    countdown--;
+    UI.interRoundTimer.innerText = countdown;
+    if (countdown <= 0) {
+      clearInterval(interRoundTimer);
+      interRoundTimer = null;
+      startNextRound();
+    }
+  }, 1000);
+}
+
+function startNextRound() {
+  UI.interRoundOverlay.classList.add('hidden');
+  // Reset round-specific state
+  resetRoundState();
+  startGame();
+}
+
+function showMatchResult(iWon) {
+  clearAllTimers();
+  state = 'RESULT';
+  document.body.classList.remove('zen-mode', 'mimic-mode', 'sudden-death-mode');
+  wipeTargets();
+  UI.interRoundOverlay.classList.add('hidden');
+
+  UI.gameArea.className = iWon ? 'state-success' : 'state-start';
+  flashScreen(iWon ? 'white' : 'red');
+  if (iWon) playRoundWin(); else playRoundLose();
+
+  UI.targetStatus.innerText = iWon ? 'victory.' : 'defeated.';
+  UI.statusPanel.innerText = iWon ? `match won ${myRoundsWon}–${oppRoundsWon}` : `match lost ${myRoundsWon}–${oppRoundsWon}`;
+  UI.statusPanel.style.color = iWon ? 'var(--green)' : 'var(--red)';
+
+  updateFirebaseState(iWon);
+
+  UI.mainBtn.style.opacity = '1';
+  UI.mainBtn.style.pointerEvents = 'auto';
+  UI.mainBtn.innerText = 'return to lobby';
+  UI.mainBtn.classList.remove('hidden');
+}
+
+function syncInterHackOptions() {
+  document.querySelectorAll('.inter-hack-option').forEach(opt => {
+    opt.classList.remove('active');
+    if (opt.getAttribute('data-hack') === equippedHack) opt.classList.add('active');
+  });
+}
+
+
+// =============================================
+// CORE GAME FUNCTIONS
+// =============================================
 function getLevelParams(idx) {
   const baseLevels = [
-    { name: 'recruit', window: 1500, threat: 'too easy' },
-    { name: 'soldier', window: 1200, threat: 'mild' },
-    { name: 'veteran', window: 900, threat: 'getting warm' },
-    { name: 'elite', window: 700, threat: 'intense' },
-    { name: 'omega', window: 500, threat: 'lethal' }
+    { name: 'recruit',  window: 1500, threat: 'too easy' },
+    { name: 'soldier',  window: 1200, threat: 'mild' },
+    { name: 'veteran',  window: 900,  threat: 'getting warm' },
+    { name: 'elite',    window: 700,  threat: 'intense' },
+    { name: 'omega',    window: 500,  threat: 'lethal' }
   ];
 
   let actualLevel = idx + 1;
   let params = { level: actualLevel };
 
   if (idx < 5) {
-    params.name = baseLevels[idx].name;
-    params.window = baseLevels[idx].window;
-    params.threat = baseLevels[idx].threat;
+    params.name     = baseLevels[idx].name;
+    params.window   = baseLevels[idx].window;
+    params.threat   = baseLevels[idx].threat;
     params.pulseDur = 0.8 - (idx * 0.1);
   } else {
-    let diff = idx - 4;
+    let diff   = idx - 4;
     let pluses = '+'.repeat(Math.min(diff, 3));
-    params.name = 'omega' + pluses;
-    params.window = Math.max(180, 500 - (diff * 25));
-
-    if (actualLevel < 10) params.threat = 'lethal';
-    else if (actualLevel < 15) params.threat = 'terminal';
-    else params.threat = 'god-tier';
-
+    params.name     = 'omega' + pluses;
+    params.window   = Math.max(180, 500 - (diff * 25));
+    params.threat   = actualLevel < 10 ? 'lethal' : actualLevel < 15 ? 'terminal' : 'god-tier';
     params.pulseDur = Math.max(0.1, 0.4 - (diff * 0.03));
   }
 
-  // Apply speed pressure if active
+  // TIMESHIFT hack: shrink window 30%
+  if (isOnline && pendingTimeshift) {
+    params.window   = Math.floor(params.window * 0.7);
+    params.threat  += ' (hacked!)';
+  }
+
+  // Speed modifier (legacy rapid-fire)
   if (speedModRounds > 0) {
-    params.window *= speedModifier;
-    params.threat += ' (sped up!)';
+    params.window  = Math.floor(params.window * speedModifier);
   }
 
   return params;
-}
-
-function getCommand(actualLevel) {
-  return 'fire';
 }
 
 function resetUI() {
@@ -459,32 +697,99 @@ function resetUI() {
 
 function updateFirebaseState(alive) {
   if (isOnline && myPlayerRef) {
-    update(myPlayerRef, { alive, streak: streak, score: score });
+    update(myPlayerRef, { alive, streak, score, roundsWon: myRoundsWon });
   }
 }
 
-function triggerCenterAlert(text) {
-  const el = document.createElement('div');
-  el.className = 'attack-alert';
-  el.innerText = text;
-  UI.centerAlerts.appendChild(el);
-  setTimeout(() => el.remove(), 2000);
-}
-
 function clearAllTimers() {
-  if (waitTimeout) clearTimeout(waitTimeout);
-  if (fireTimeout) clearTimeout(fireTimeout);
-  if (holdTimeout) clearTimeout(holdTimeout);
-  if (doubleTimeout) clearTimeout(doubleTimeout);
-  if (autoNextTimeout) clearTimeout(autoNextTimeout);
-  if (beepInterval) clearInterval(beepInterval);
+  clearTimeout(waitTimeout);
+  clearTimeout(fireTimeout);
+  clearTimeout(holdTimeout);
+  clearTimeout(doubleTimeout);
+  clearTimeout(autoNextTimeout);
+  clearInterval(beepInterval);
   waitTimeout = fireTimeout = holdTimeout = doubleTimeout = autoNextTimeout = beepInterval = null;
 }
 
+// Reset only per-round transient hack effects
+function resetRoundState() {
+  // Clear body classes from previous round
+  document.body.classList.remove('mimic-mode', 'sudden-death-mode');
+
+  isZenMode     = false;
+  perfectStreak = 0;
+  hackFiredThisZen  = false;
+  parryWindowActive = false;
+  pendingParryHackType = null;
+
+  // Consume pending hacks (they were set last round, consume now)
+  if (pendingMimic)    document.body.classList.add('mimic-mode');
+  if (speedModRounds > 0) speedModRounds--;
+  if (speedModRounds <= 0) { speedModifier = 1.0; }
+
+  document.body.classList.remove('zen-mode');
+}
+
+// Called once per online match start
+function resetMatchState() {
+  myRoundsWon   = 0;
+  oppRoundsWon  = 0;
+  matchOver     = false;
+  resetRoundScores();
+  updateRoundPips();
+}
+
+function resetRoundScores() {
+  streak        = 0;
+  score         = 0;
+  perfectStreak = 0;
+  isZenMode     = false;
+  hackFiredThisZen = false;
+  parryWindowActive = false;
+  pendingParryHackType = null;
+  pendingOverload   = 0;
+  pendingTimeshift  = false;
+  pendingMimic      = false;
+  speedModRounds    = 0;
+  speedModifier     = 1.0;
+  document.body.classList.remove('zen-mode', 'mimic-mode', 'sudden-death-mode');
+}
+
+function resetScores() {
+  resetRoundScores();
+}
+
+function resetGameState() {
+  clearAllTimers();
+  activeTarget.resolved = true;
+  const activeBtn = Array.from(UI.diffBtns).find(b => b.classList.contains('active'));
+  currentLevelIdx = isOnline ? 0 : (activeBtn ? parseInt(activeBtn.dataset.level) - 1 : 0);
+  wipeTargets();
+}
+
+// =============================================
+// SUDDEN DEATH CHECK
+// =============================================
+function checkSuddenDeath() {
+  if (!isOnline) return;
+  if (currentLevelIdx >= 4 && !document.body.classList.contains('sudden-death-mode')) {
+    document.body.classList.add('sudden-death-mode');
+    UI.modeBadge.innerText = '⚡ SUDDEN DEATH';
+  }
+}
+
+// =============================================
+// GAME FLOW
+// =============================================
 function startGame() {
   clearAllTimers();
   resetUI();
   wipeTargets();
+
+  // Apply pending hacks from previous round
+  if (isOnline) {
+    if (pendingMimic) document.body.classList.add('mimic-mode');
+  }
 
   updateFirebaseState(true);
 
@@ -503,7 +808,7 @@ function startGame() {
     let count = 3;
     UI.targetStatus.innerText = count;
     UI.statusPanel.innerText = 'get ready';
-    
+
     beepInterval = setInterval(() => {
       count--;
       if (count > 0) {
@@ -511,7 +816,7 @@ function startGame() {
         playLockOn();
       } else if (count === 0) {
         UI.targetStatus.innerText = 'GO!';
-        playLockOn(); 
+        playLockOn();
       } else {
         clearInterval(beepInterval);
         startWaitPhase();
@@ -526,24 +831,19 @@ function startWaitPhase() {
   state = 'WAIT';
   UI.gameArea.className = 'state-wait';
   UI.targetStatus.innerText = 'waiting...';
-
-  let modifierText = 'wait for it';
   UI.statusPanel.style.color = 'var(--text-muted)';
-  UI.statusPanel.innerText = modifierText;
-
+  UI.statusPanel.innerText = 'wait for it';
   UI.mainBtn.style.opacity = '0';
   UI.mainBtn.style.pointerEvents = 'none';
 
   const lvlParams = getLevelParams(currentLevelIdx);
   UI.diffContainer.style.opacity = '0.2';
   UI.diffContainer.style.pointerEvents = 'none';
-
   document.documentElement.style.setProperty('--pulse-dur', `${lvlParams.pulseDur}s`);
 
-  // --- Target Positioning Phase ---
   const tw = document.getElementById('target-wrapper');
   let activePositions = [];
-  
+
   if (currentLevelIdx >= 1) {
     const p1 = getRandomPos(currentLevelIdx, activePositions);
     activePositions.push(p1);
@@ -551,21 +851,24 @@ function startWaitPhase() {
     tw.style.transform = `translate(calc(-50% + ${p1.x}px), calc(-50% + ${p1.y}px))`;
   } else {
     tw.style.transition = 'transform 0.4s ease-out';
-    tw.style.transform = `translate(-50%, -50%)`;
+    tw.style.transform = 'translate(-50%, -50%)';
   }
 
-  if (currentLevelIdx >= 1) {
+  // OVERLOAD hack: add extra decoys
+  if (currentLevelIdx >= 1 || (isOnline && pendingOverload > 0)) {
     let decoyCount = Math.min(6, currentLevelIdx + 1);
+    if (isOnline && pendingOverload > 0) {
+      decoyCount += pendingOverload;
+      pendingOverload = 0; // consume
+    }
     spawnDecoys(decoyCount, currentLevelIdx, activePositions);
   }
-  // --------------------------------
 
-  const delay = Math.random() * 300 + 200; // 200ms to 500ms
+  checkSuddenDeath();
+
+  const delay = Math.random() * 300 + 200;
   targetFireTime = performance.now() + delay;
-
-  waitTimeout = setTimeout(() => {
-    firePhase();
-  }, delay);
+  waitTimeout = setTimeout(() => { firePhase(); }, delay);
 }
 
 function spawnFloatingText(e, text, color) {
@@ -579,7 +882,7 @@ function spawnFloatingText(e, text, color) {
   if (e.clientX !== undefined) { x = e.clientX; y = e.clientY; }
   else if (e.touches && e.touches.length > 0) { x = e.touches[0].clientX; y = e.touches[0].clientY; }
   el.style.left = x + 'px';
-  el.style.top = y + 'px';
+  el.style.top  = y + 'px';
   document.body.appendChild(el);
   setTimeout(() => el.remove(), 1000);
 }
@@ -588,178 +891,53 @@ function getRandomPos(level, existingPositions = []) {
   const tSize = 100;
   const maxW = window.innerWidth - tSize - 40;
   const maxH = window.innerHeight - tSize - 160;
-  
   const spreadX = maxW / 2;
   const spreadY = maxH / 2;
-  
-  const minDist = 110; 
-  let x, y;
-  let attempts = 0;
-  let valid = false;
-  
+  const minDist = 110;
+  let x, y, valid = false, attempts = 0;
+
   while (!valid && attempts < 50) {
     x = (seededRandom() * spreadX * 2) - spreadX;
     y = (seededRandom() * spreadY * 2) - spreadY;
-    
     valid = true;
     for (const pos of existingPositions) {
-      const dx = x - pos.x;
-      const dy = y - pos.y;
-      if (Math.sqrt(dx*dx + dy*dy) < minDist) {
-        valid = false;
-        break;
-      }
+      const dx = x - pos.x, dy = y - pos.y;
+      if (Math.sqrt(dx*dx + dy*dy) < minDist) { valid = false; break; }
     }
     attempts++;
   }
-  
-  return {x, y};
+  return { x, y };
 }
 
 function spawnDecoys(count, level, existingPositions) {
-  for(let i=0; i<count; i++) {
+  for (let i = 0; i < count; i++) {
     const decoy = document.createElement('div');
     decoy.className = 'fake-target';
-    
-    // Spawn in center and slide out during wait phase
+
     const p = getRandomPos(level, existingPositions);
     existingPositions.push(p);
-    
+
     decoy.style.transition = 'none';
-    decoy.style.transform = `translate(-50%, -50%)`;
+    decoy.style.transform  = 'translate(-50%, -50%)';
     UI.gameArea.appendChild(decoy);
-    
-    void decoy.offsetWidth; // flush styles
+    void decoy.offsetWidth;
 
     decoy.style.transition = 'transform 0.2s ease-out';
-    decoy.style.transform = `translate(calc(-50% + ${p.x}px), calc(-50% + ${p.y}px))`;
-    
+    decoy.style.transform  = `translate(calc(-50% + ${p.x}px), calc(-50% + ${p.y}px))`;
+
     const failHandler = (e) => {
       e.stopPropagation();
       if (e.cancelable) e.preventDefault();
       if (state === 'WAIT') {
-        failGame('too early.');
+        if (isOnline) { onlineFail('too early.'); } else { failGame('too early.'); }
       } else if (state === 'FIRE' && !activeTarget.resolved) {
         activeTarget.resolved = true;
-        failGame('hit fake target.');
+        if (isOnline) { onlineFail('hit fake target.'); } else { failGame('hit fake target.'); }
       }
     };
     decoy.addEventListener('mousedown', failHandler);
     decoy.addEventListener('touchstart', failHandler, { passive: false });
   }
-}
-// No duplicate wipeTargets
-
-function firePhase() {
-  state = 'FIRE';
-  UI.gameArea.className = 'state-fire';
-  UI.statusPanel.style.color = 'var(--green)';
-  UI.targetStatus.innerText = 'click!';
-  UI.statusPanel.innerText = 'now!';
-  flashScreen('white'); playFire();
-
-  document.querySelectorAll('.fake-target').forEach(el => {
-    el.classList.add('revealed');
-  });
-
-  startTime = performance.now();
-  const currentLevel = getLevelParams(currentLevelIdx);
-
-  activeTarget = {
-    id: Date.now() + Math.random(),
-    spawnedAt: performance.now(),
-    allowedTime: currentLevel.window,
-    resolved: false
-  };
-  const tid = activeTarget.id;
-
-  fireTimeout = setTimeout(() => {
-    if (activeTarget.id === tid && !activeTarget.resolved) {
-      activeTarget.resolved = true;
-      failGame('too slow.');
-    }
-  }, activeTarget.allowedTime);
-}
-
-function successGame() {
-  const rt = Math.floor(performance.now() - startTime);
-  clearAllTimers(); 
-  activeTarget.resolved = true;
-  holdActive = false; doublePending = false;
-
-  state = 'RESULT';
-  resultStartTime = performance.now();
-  UI.gameArea.className = 'state-success';
-  UI.targetStatus.innerText = 'nice.';
-
-  UI.statusPanel.innerText = 'survived.';
-  UI.statusPanel.style.color = 'var(--text-muted)';
-
-  const streakEl = document.getElementById('streak-counter');
-  streakEl.classList.remove('score-pulse');
-  void streakEl.offsetWidth; 
-  streakEl.classList.add('score-pulse');
-
-  playSuccess();
-  streak++;
-
-  // Online Attacks
-  if (isOnline) {
-    if (streak === 3) sendAttack('fake');
-    else if (streak === 5) sendAttack('shake');
-    else if (streak === 8) sendAttack('speed');
-  }
-
-  if (streak % 1 === 0) currentLevelIdx++;
-  updateFirebaseState(true);
-
-  updateSelectorUI();
-  updateBestScore();
-
-  showResult(rt, null);
-  updateSidebar();
-
-  autoNextTimeout = setTimeout(() => {
-    if (state === 'RESULT') startGame();
-  }, 500);
-}
-
-function clearTemporaryFeedback() {
-  if (feedbackTimeout) {
-    clearTimeout(feedbackTimeout);
-    feedbackTimeout = null;
-  }
-  document.querySelectorAll('.floating-text').forEach(e => e.remove());
-  UI.gameArea.className = '';
-  document.body.classList.remove('screen-shake', 'screen-shake-small');
-  UI.targetStatus.innerText = '';
-  UI.resultDisplay.classList.add('hidden');
-}
-
-function showTemporaryFeedback(timeText, rankClass, rankText, duration = 400) {
-  if (feedbackTimeout) clearTimeout(feedbackTimeout);
-  
-  UI.resultTime.innerText = timeText;
-  UI.resultRank.innerText = rankText || '';
-  if (rankClass) {
-    UI.resultRank.className = rankClass;
-  } else {
-    UI.resultRank.className = '';
-  }
-  
-  if (timeText === 'WIN') {
-    UI.resultTime.style.color = 'var(--green)';
-  } else if (timeText.startsWith('SCORE:')) {
-    UI.resultTime.style.color = 'var(--red)';
-  } else {
-    UI.resultTime.style.color = 'var(--text-main)';
-  }
-
-  UI.resultDisplay.classList.remove('hidden');
-  
-  feedbackTimeout = setTimeout(() => {
-    clearTemporaryFeedback();
-  }, duration);
 }
 
 function wipeTargets() {
@@ -767,11 +945,48 @@ function wipeTargets() {
   const tw = document.getElementById('target-wrapper');
   if (tw) {
     tw.style.transition = 'none';
-    tw.style.transform = 'translate(-50%, -50%)';
+    tw.style.transform  = 'translate(-50%, -50%)';
   }
   clearTemporaryFeedback();
 }
 
+function firePhase() {
+  state = 'FIRE';
+  UI.gameArea.className = 'state-fire';
+  UI.statusPanel.style.color = 'var(--green)';
+  UI.targetStatus.innerText = 'click!';
+  UI.statusPanel.innerText  = 'now!';
+  flashScreen('white');
+  playFire();
+
+  document.querySelectorAll('.fake-target').forEach(el => el.classList.add('revealed'));
+
+  startTime = performance.now();
+  const lvl = getLevelParams(currentLevelIdx);
+
+  // Consume TIMESHIFT (already applied to lvl.window above)
+  pendingTimeshift = false;
+
+  activeTarget = {
+    id: Date.now() + Math.random(),
+    spawnedAt: performance.now(),
+    allowedTime: lvl.window,
+    resolved: false
+  };
+  const tid = activeTarget.id;
+
+  fireTimeout = setTimeout(() => {
+    if (activeTarget.id === tid && !activeTarget.resolved) {
+      activeTarget.resolved = true;
+      if (isOnline) { onlineFail('too slow.'); } else { failGame('too slow.'); }
+    }
+  }, lvl.window);
+}
+
+
+// =============================================
+// ZEN MODE & HACK TRIGGER
+// =============================================
 function activateZenMode() {
   isZenMode = true;
   document.body.classList.add('zen-mode');
@@ -779,88 +994,120 @@ function activateZenMode() {
   document.body.classList.add('screen-shake');
   spawnFloatingText(null, 'ZONE ENTERED', '#ffd700');
   playTone(1000, 'square', 0.5, 0.2);
+  setTimeout(() => document.body.classList.remove('screen-shake'), 300);
+
+  // Fire hack at opponent (online only, once per ZEN)
+  if (isOnline && !hackFiredThisZen) {
+    hackFiredThisZen = true;
+    sendHack(equippedHack);
+    showHackExecutedBanner(equippedHack);
+    playHackLaunch();
+  }
 }
 
 function grantScore(e, elapsed, basePoints, typeText) {
   let isPerfect = elapsed < 200;
-  
+
   if (isPerfect) {
+    // Firewall check: first PERFECT after receiving a hack = parry
+    if (isOnline && parryWindowActive) {
+      attemptParry();
+    }
+
     perfectStreak++;
     if (perfectStreak >= 5 && !isZenMode) activateZenMode();
   } else {
-    perfectStreak = 0; 
+    perfectStreak = 0;
     if (isZenMode) {
       isZenMode = false;
+      hackFiredThisZen = false;
       document.body.classList.remove('zen-mode');
       spawnFloatingText(e, 'ZONE LOST', 'var(--text-muted)');
     }
   }
 
-  if (isPerfect && basePoints > 0) basePoints += 1; 
-
   let pMult = isZenMode ? 5.0 : ((streak >= 10) ? 2.0 : (streak >= 5) ? 1.5 : 1.0);
+  if (isPerfect && basePoints > 0) basePoints += 1;
   let pts = Math.floor(basePoints * pMult);
   score += pts;
-  
+
   let tColor = isZenMode ? '#ffd700' : (isPerfect ? '#ff00ff' : 'var(--green)');
-  let pre = isZenMode ? `ZEN x5.0! ` : (isPerfect ? `PERFECT x${pMult}! ` : (pMult > 1.0 ? `x${pMult} ` : ''));
-  let tText = `${pre}${typeText} +${pts}`;
-  
-  spawnFloatingText(e, tText, tColor);
+  let pre    = isZenMode ? 'ZEN x5.0! ' : (isPerfect ? `PERFECT x${pMult}! ` : (pMult > 1.0 ? `x${pMult} ` : ''));
+  spawnFloatingText(e, `${pre}${typeText} +${pts}`, tColor);
 }
 
-function resetScores() {
-  streak = 0;
-  score = 0;
-  perfectStreak = 0;
-  isZenMode = false;
-  document.body.classList.remove('zen-mode');
-  speedModRounds = 0;
-  speedModifier = 1.0;
-}
-
-function resetGameState() {
-  clearAllTimers(); 
+// =============================================
+// SUCCESS / FAIL (Online-aware)
+// =============================================
+function successGame() {
+  const rt = Math.floor(performance.now() - startTime);
+  clearAllTimers();
   activeTarget.resolved = true;
-  const activeBtn = Array.from(UI.diffBtns).find(b => b.classList.contains('active'));
-  currentLevelIdx = activeBtn ? parseInt(activeBtn.dataset.level) - 1 : 0;
-  wipeTargets();
-}
-
-function winGame(reason) {
-  resetGameState();
-  UI.diffContainer.style.opacity = '1';
-  UI.diffContainer.style.pointerEvents = 'auto';
 
   state = 'RESULT';
+  resultStartTime = performance.now();
   UI.gameArea.className = 'state-success';
+  UI.targetStatus.innerText = 'nice.';
+  UI.statusPanel.innerText  = 'survived.';
+  UI.statusPanel.style.color = 'var(--text-muted)';
 
-  flashScreen('white');
+  const streakEl = document.getElementById('streak-counter');
+  streakEl.classList.remove('score-pulse');
+  void streakEl.offsetWidth;
+  streakEl.classList.add('score-pulse');
+
   playSuccess();
-
-  UI.targetStatus.innerText = 'victory.';
-  UI.statusPanel.innerText = reason;
-  UI.statusPanel.style.color = 'var(--text-main)';
-
-  showTemporaryFeedback('WIN', 'rank-godlike', 'survivor', 800);
-
+  streak++;
+  if (streak % 1 === 0) currentLevelIdx++;
   updateFirebaseState(true);
   updateSelectorUI();
+  updateBestScore();
+  showResult(rt, null);
   updateSidebar();
 
-  UI.mainBtn.style.opacity = '1';
-  UI.mainBtn.style.pointerEvents = 'auto';
-  UI.mainBtn.innerText = 'return to lobby';
+  // Consume MIMIC after first fire phase
+  pendingMimic = false;
+  document.body.classList.remove('mimic-mode');
+
+  autoNextTimeout = setTimeout(() => {
+    if (state === 'RESULT') startGame();
+  }, 500);
 }
 
+// Online fail → round loss, not match over immediately
+function onlineFail(reason) {
+  isZenMode    = false;
+  perfectStreak = 0;
+  hackFiredThisZen = false;
+  document.body.classList.remove('zen-mode');
+
+  clearAllTimers();
+  activeTarget.resolved = true;
+
+  UI.diffContainer.style.opacity    = '1';
+  UI.diffContainer.style.pointerEvents = 'auto';
+
+  flashScreen('red');
+  playFail();
+
+  document.body.classList.add('screen-shake');
+  setTimeout(() => document.body.classList.remove('screen-shake'), 300);
+
+  updateFirebaseState(false);
+  updateSidebar();
+
+  handleRoundLoss(reason);
+}
+
+// Offline fail (unchanged user experience)
 function failGame(reason) {
-  isZenMode = false;
+  isZenMode    = false;
   perfectStreak = 0;
   document.body.classList.remove('zen-mode');
-  
+
   resetGameState();
 
-  UI.diffContainer.style.opacity = '1';
+  UI.diffContainer.style.opacity    = '1';
   UI.diffContainer.style.pointerEvents = 'auto';
 
   state = 'RESULT';
@@ -872,7 +1119,7 @@ function failGame(reason) {
   playFail();
 
   UI.targetStatus.innerText = '';
-  UI.statusPanel.innerText = reason;
+  UI.statusPanel.innerText  = reason;
   UI.statusPanel.style.color = 'var(--red)';
 
   UI.gameOverScore.innerText = score;
@@ -882,21 +1129,67 @@ function failGame(reason) {
   updateSelectorUI();
   updateSidebar();
 
-  UI.mainBtn.style.opacity = '1';
+  UI.mainBtn.style.opacity      = '1';
   UI.mainBtn.style.pointerEvents = 'auto';
-  UI.mainBtn.innerText = isOnline ? 'return to lobby' : 'REMATCH';
+  UI.mainBtn.innerText = 'REMATCH';
+}
+
+// Online win (opponent died) — now routes through BO5
+function winGame(reason) {
+  if (isOnline) {
+    handleRoundWin(reason);
+    return;
+  }
+  resetGameState();
+  UI.diffContainer.style.opacity    = '1';
+  UI.diffContainer.style.pointerEvents = 'auto';
+  state = 'RESULT';
+  UI.gameArea.className = 'state-success';
+  flashScreen('white');
+  playSuccess();
+  UI.targetStatus.innerText = 'victory.';
+  UI.statusPanel.innerText  = reason;
+  UI.statusPanel.style.color = 'var(--text-main)';
+  showTemporaryFeedback('WIN', 'rank-godlike', 'survivor', 800);
+  updateFirebaseState(true);
+  updateSelectorUI();
+  updateSidebar();
+  UI.mainBtn.style.opacity      = '1';
+  UI.mainBtn.style.pointerEvents = 'auto';
+  UI.mainBtn.innerText = 'return to lobby';
+}
+
+// =============================================
+// UI HELPERS
+// =============================================
+function clearTemporaryFeedback() {
+  if (feedbackTimeout) { clearTimeout(feedbackTimeout); feedbackTimeout = null; }
+  document.querySelectorAll('.floating-text').forEach(e => e.remove());
+  UI.gameArea.className = '';
+  document.body.classList.remove('screen-shake', 'screen-shake-small');
+  UI.targetStatus.innerText = '';
+  UI.resultDisplay.classList.add('hidden');
+}
+
+function showTemporaryFeedback(timeText, rankClass, rankText, duration = 400) {
+  if (feedbackTimeout) clearTimeout(feedbackTimeout);
+  UI.resultTime.innerText  = timeText;
+  UI.resultRank.innerText  = rankText || '';
+  UI.resultRank.className  = rankClass || '';
+  UI.resultTime.style.color = timeText === 'WIN' ? 'var(--green)' : timeText.startsWith('SCORE:') ? 'var(--red)' : 'var(--text-main)';
+  UI.resultDisplay.classList.remove('hidden');
+  feedbackTimeout = setTimeout(() => { clearTemporaryFeedback(); }, duration);
 }
 
 function showResult(rt, overrideRank) {
   if (overrideRank) {
     showTemporaryFeedback(overrideRank, 'rank-godlike', '', 400);
   } else {
-    let rank = ''; let rankClass = '';
-    if (rt < 150) { rank = 'godlike'; rankClass = 'rank-godlike'; }
-    else if (rt < 200) { rank = 'elite'; rankClass = 'rank-elite'; }
-    else if (rt < 250) { rank = 'sharp'; rankClass = 'rank-sharp'; }
-    else { rank = 'slow'; rankClass = 'rank-slow'; }
-
+    let rank, rankClass;
+    if      (rt < 150) { rank = 'godlike'; rankClass = 'rank-godlike'; }
+    else if (rt < 200) { rank = 'elite';   rankClass = 'rank-elite'; }
+    else if (rt < 250) { rank = 'sharp';   rankClass = 'rank-sharp'; }
+    else               { rank = 'slow';    rankClass = 'rank-slow'; }
     showTemporaryFeedback(rt + 'ms', rankClass, rank, 400);
   }
 }
@@ -918,10 +1211,9 @@ function updateSidebar() {
   const lvlParams = getLevelParams(currentLevelIdx);
   UI.levelDisplay.innerText = `level ${lvlParams.level} // ${lvlParams.name}`;
   UI.threatDisplay.innerText = lvlParams.threat;
-
   if (bestScoreAmt) UI.bestScore.innerText = bestScoreAmt + ' pts';
-  if (UI.scoreCounter) UI.scoreCounter.innerText = score;
-  UI.streakCounter.innerText = streak;
+  if (UI.scoreCounter)  UI.scoreCounter.innerText  = score;
+  if (UI.streakCounter) UI.streakCounter.innerText = streak;
 }
 
 function updateSelectorUI() {
@@ -932,6 +1224,26 @@ function updateSelectorUI() {
   }
 }
 
+// =============================================
+// COUNTDOWN & ENTER GAME
+// =============================================
+function startCountdown(endTime) {
+  Lobby.btnReady.classList.add('hidden');
+  Lobby.btnStart.classList.add('hidden');
+  Lobby.hostMessage.classList.add('hidden');
+  Lobby.countdown.classList.remove('hidden');
+
+  const iv = setInterval(() => {
+    const left = Math.ceil((endTime - Date.now()) / 1000);
+    if (left > 0) {
+      Lobby.countdown.innerText = left;
+    } else {
+      clearInterval(iv);
+      enterGameMode(true);
+    }
+  }, 100);
+}
+
 function enterGameMode(online) {
   isOnline = online;
   showScreen('screen-game');
@@ -939,18 +1251,28 @@ function enterGameMode(online) {
 
   if (isOnline) {
     document.getElementById('opp-stats').classList.remove('hidden');
-    UI.bestContainer.classList.add('hidden'); // Hide best score in online
-    UI.diffContainer.classList.add('hidden'); // No difficulty selector in online, synced by seed
-    currentLevelIdx = 0; // Online always starts at level 1 for fairness
+    UI.roundScoreboard.classList.remove('hidden');
+    UI.pingDisplay.classList.remove('hidden');
+    UI.bestContainer.classList.add('hidden');
+    UI.diffContainer.classList.add('hidden');
+    currentLevelIdx = 0;
     UI.btnQuit.classList.remove('hidden');
-    UI.mainBtn.classList.add('hidden'); // Started automatically
+    UI.mainBtn.classList.add('hidden');
+    UI.mainBtn.style.opacity = '0';
+
+    resetMatchState();
+    startPingLoop();
+    setupPingResponder();
     startGame();
   } else {
     document.getElementById('opp-stats').classList.add('hidden');
+    UI.roundScoreboard.classList.add('hidden');
+    UI.pingDisplay.classList.add('hidden');
     UI.bestContainer.classList.remove('hidden');
     UI.diffContainer.classList.remove('hidden');
     UI.btnQuit.classList.remove('hidden');
     UI.mainBtn.classList.remove('hidden');
+    UI.mainBtn.style.opacity = '1';
     state = 'START';
     resetScores();
     resetUI();
@@ -958,24 +1280,20 @@ function enterGameMode(online) {
   }
 }
 
-// --- INPUT EVENT LOGIC ---
 
+// =============================================
+// INPUT HANDLERS
+// =============================================
 function handleBackgroundClick(e) {
-  if (e) {
-    if (e.cancelable) e.preventDefault();
-  }
+  if (e && e.cancelable) e.preventDefault();
   initAudio();
+
   if (state === 'START' || state === 'RESULT') {
     if (state === 'RESULT' && performance.now() - resultStartTime < 300) return;
     if (!isOnline) {
       startGame();
     } else {
-      if (myPlayerRef) update(myPlayerRef, { ready: false, alive: true, streak: 0 });
-      if (isHost && roomRef) update(roomRef, { state: 'lobby', gameStarted: false });
-      showLobbyInfo();
-      showScreen('screen-lobby');
-      state = 'START';
-      resetGameState(); 
+      returnToLobby();
     }
   } else if (state === 'WAIT') {
     if (performance.now() >= targetFireTime - 80) {
@@ -983,46 +1301,41 @@ function handleBackgroundClick(e) {
       clearInterval(beepInterval);
       firePhase();
       activeTarget.resolved = true;
-      failGame('missed target.');
+      if (isOnline) { onlineFail('missed target.'); } else { failGame('missed target.'); }
     } else {
-      failGame('too early.');
+      if (isOnline) { onlineFail('too early.'); } else { failGame('too early.'); }
     }
   } else if (state === 'FIRE') {
     if (!activeTarget.resolved) {
       activeTarget.resolved = true;
-      failGame('missed target.');
+      if (isOnline) { onlineFail('missed target.'); } else { failGame('missed target.'); }
     }
   }
 }
 
 function handleInputDown(e) {
-  if (e) {
-    if (e.cancelable) e.preventDefault();
-    e.stopImmediatePropagation();
-  }
+  if (e && e.cancelable) e.preventDefault();
+  if (e) e.stopImmediatePropagation();
   initAudio();
+
   if (state === 'START' || state === 'RESULT') {
     if (state === 'RESULT' && performance.now() - resultStartTime < 300) return;
     if (!isOnline) {
-      if (state === 'RESULT') {
-        resetScores();
-      }
+      if (state === 'RESULT') resetScores();
       startGame();
     } else {
-      if (myPlayerRef) update(myPlayerRef, { ready: false, alive: true, streak: 0 });
-      if (isHost && roomRef) update(roomRef, { state: 'lobby', gameStarted: false });
-      showLobbyInfo();
-      showScreen('screen-lobby');
-      state = 'START';
-      resetGameState();
+      returnToLobby();
     }
-  } else if (state === 'WAIT') {
+    return;
+  }
+
+  if (state === 'WAIT') {
     if (performance.now() >= targetFireTime - 80) {
       clearTimeout(waitTimeout);
       clearInterval(beepInterval);
       firePhase();
     } else {
-      failGame('too early.');
+      if (isOnline) { onlineFail('too early.'); } else { failGame('too early.'); }
       return;
     }
   }
@@ -1044,24 +1357,46 @@ function handleInputDown(e) {
       successGame();
     } else {
       activeTarget.resolved = true;
-      failGame('too slow.');
+      if (isOnline) { onlineFail('too slow.'); } else { failGame('too slow.'); }
     }
   }
 }
 
-// --- LISTENERS END SETUP ---
+function returnToLobby() {
+  clearAllTimers();
+  if (interRoundTimer) { clearInterval(interRoundTimer); interRoundTimer = null; }
+  stopPingLoop();
+  matchOver = false;
+  document.body.classList.remove('zen-mode', 'mimic-mode', 'sudden-death-mode');
+  UI.interRoundOverlay.classList.add('hidden');
 
+  if (myPlayerRef) update(myPlayerRef, { ready: false, alive: true, streak: 0, roundsWon: 0 });
+  if (isHost && roomRef) update(roomRef, { state: 'lobby', gameStarted: false });
+  showLobbyInfo();
+  showScreen('screen-lobby');
+  state = 'START';
+  resetGameState();
+  resetRoundScores();
+}
+
+// =============================================
+// EVENT LISTENERS
+// =============================================
+
+// Target click
 const tw = document.getElementById('target-wrapper');
 tw.addEventListener('mousedown', handleInputDown);
 tw.addEventListener('touchstart', handleInputDown, { passive: false });
 
+// Background miss
 UI.clickLayer.addEventListener('mousedown', handleBackgroundClick);
 UI.clickLayer.addEventListener('touchstart', handleBackgroundClick, { passive: false });
 
+// Main button (Play / Return)
 UI.mainBtn.addEventListener('mousedown', handleInputDown);
 UI.mainBtn.addEventListener('touchstart', handleInputDown, { passive: false });
 
-// Hack Loadout Selection
+// Lobby hack options (pre-match)
 Lobby.hackOptions.forEach(opt => {
   opt.addEventListener('click', (e) => {
     Lobby.hackOptions.forEach(o => o.classList.remove('active'));
@@ -1070,30 +1405,46 @@ Lobby.hackOptions.forEach(opt => {
   });
 });
 
+// Inter-round hack options (mid-match)
+document.querySelectorAll('.inter-hack-option').forEach(opt => {
+  opt.addEventListener('click', (e) => {
+    document.querySelectorAll('.inter-hack-option').forEach(o => o.classList.remove('active'));
+    e.target.classList.add('active');
+    equippedHack = e.target.getAttribute('data-hack');
+    // Also sync the lobby options to stay consistent
+    Lobby.hackOptions.forEach(o => {
+      o.classList.remove('active');
+      if (o.getAttribute('data-hack') === equippedHack) o.classList.add('active');
+    });
+  });
+});
+
+// Difficulty buttons (offline only)
 UI.diffBtns.forEach(btn => {
   const handler = (e) => {
     e.stopPropagation();
     if (state !== 'START' && state !== 'RESULT') return;
     currentLevelIdx = parseInt(e.target.dataset.level) - 1;
-    resetScores(); 
-    updateSelectorUI(); 
+    resetScores();
+    updateSelectorUI();
     updateSidebar();
     if (state === 'RESULT') {
-      UI.gameArea.className = 'state-start';
+      UI.gameArea.className   = 'state-start';
       UI.targetStatus.innerText = 'one miss and it ends.';
       UI.resultDisplay.classList.add('hidden');
-      UI.mainBtn.innerText = 'play';
+      UI.mainBtn.innerText    = 'play';
       UI.statusPanel.innerText = 'ready.';
       UI.statusPanel.style.color = 'var(--text-muted)';
       state = 'START';
     }
   };
-  btn.addEventListener('mousedown', handler); btn.addEventListener('touchstart', handler);
+  btn.addEventListener('mousedown', handler);
+  btn.addEventListener('touchstart', handler);
 });
 
-// Menu Listeners
-Lobby.btnOffline.addEventListener('click', (e) => { initAudio(); enterGameMode(false); });
-Lobby.btnOnline.addEventListener('click', (e) => { initAudio(); showScreen('screen-lobby'); });
+// Menu buttons
+Lobby.btnOffline.addEventListener('click', () => { initAudio(); enterGameMode(false); });
+Lobby.btnOnline.addEventListener('click',  () => { initAudio(); showScreen('screen-lobby'); });
 
 Lobby.btnCreate.addEventListener('click', createRoom);
 Lobby.btnJoin.addEventListener('click', () => {
@@ -1106,27 +1457,21 @@ Lobby.btnReady.addEventListener('click', async () => {
 });
 
 Lobby.btnStart.addEventListener('click', async () => {
-  console.log('[Lobby] Host clicked Start Game');
   Lobby.btnStart.disabled = true;
   Lobby.btnStart.classList.add('hidden');
-  
   if (isHost && roomRef) {
     try {
-      console.log('[Lobby] Pushing start data to Firebase...');
       await update(roomRef, {
         state: 'starting',
         gameStarted: true,
         startedAt: Date.now(),
         countdownEnd: Date.now() + 3000
       });
-      console.log('[Lobby] Successfully wrote start state to Firebase.');
     } catch (e) {
       console.error('[Lobby] Firebase Error on Start Game:', e);
       Lobby.btnStart.disabled = false;
       Lobby.btnStart.classList.remove('hidden');
     }
-  } else {
-    console.error('[Lobby] Start failed: not host, or roomRef is missing.', { isHost, hasRef: !!roomRef });
   }
 });
 
@@ -1136,12 +1481,17 @@ Lobby.btnLeave.addEventListener('click', async () => {
 });
 
 UI.btnQuit.addEventListener('click', async () => {
+  clearAllTimers();
+  if (interRoundTimer) { clearInterval(interRoundTimer); interRoundTimer = null; }
+  stopPingLoop();
+  document.body.classList.remove('zen-mode', 'mimic-mode', 'sudden-death-mode');
+  UI.interRoundOverlay.classList.add('hidden');
   if (myPlayerRef) await remove(myPlayerRef);
-  clearTimeout(autoNextTimeout);
-  clearTimeout(waitTimeout);
-  clearTimeout(fireTimeout);
   showScreen('screen-menu');
 });
 
+// =============================================
 // INITIALIZE
+// =============================================
 updateSidebar();
+updateRoundPips();
