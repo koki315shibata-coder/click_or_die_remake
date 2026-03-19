@@ -818,3 +818,70 @@ body.sudden-death-mode #mode-badge {
   80%  { opacity: 1; }
   100% { opacity: 0; }
 }
+
+/* ================================================
+   PERFECT HIT & ZEN BURST VISUAL EFFECTS
+   ================================================ */
+
+/* Quick white shimmer when PERFECT */
+body.perfect-burst::after {
+  content: '';
+  position: fixed;
+  inset: 0;
+  background: radial-gradient(ellipse at center, rgba(192, 132, 252, 0.22) 0%, transparent 70%);
+  pointer-events: none;
+  z-index: 500;
+  animation: perfectShimmer 0.2s ease-out forwards;
+}
+@keyframes perfectShimmer {
+  0%   { opacity: 1; }
+  100% { opacity: 0; }
+}
+
+/* Golden radial glow for ZEN burst */
+body.zen-burst::after {
+  content: '';
+  position: fixed;
+  inset: 0;
+  background: radial-gradient(ellipse at center, rgba(255, 215, 0, 0.30) 0%, transparent 65%);
+  pointer-events: none;
+  z-index: 500;
+  animation: zenShimmer 0.35s ease-out forwards;
+}
+@keyframes zenShimmer {
+  0%   { opacity: 1; transform: scale(0.95); }
+  50%  { transform: scale(1.02); }
+  100% { opacity: 0; transform: scale(1); }
+}
+
+/* PERFECT floating text — bigger and bolder */
+.floating-text {
+  font-weight: 900;
+  letter-spacing: 2px;
+  text-shadow: 0 0 12px currentColor;
+  pointer-events: none;
+}
+
+/* Floating text — ZEN version is larger */
+body.zen-mode .floating-text {
+  font-size: 1.3rem;
+  text-shadow: 0 0 24px currentColor, 0 0 40px currentColor;
+}
+
+/* Target pulse on PERFECT — done via JS class */
+#main-target.perfect {
+  box-shadow: 0 0 0 0 rgba(255, 0, 255, 0.6);
+  animation: perfectRing 0.35s ease-out forwards;
+}
+@keyframes perfectRing {
+  0%   { box-shadow: 0 0 0 0 rgba(255,0,255,0.6); }
+  100% { box-shadow: 0 0 0 40px rgba(255,0,255,0); }
+}
+#main-target.zen-perfect {
+  box-shadow: 0 0 0 0 rgba(255, 215, 0, 0.8);
+  animation: zenRing 0.4s ease-out forwards;
+}
+@keyframes zenRing {
+  0%   { box-shadow: 0 0 0 0 rgba(255,215,0,0.8); }
+  100% { box-shadow: 0 0 0 60px rgba(255,215,0,0); }
+}

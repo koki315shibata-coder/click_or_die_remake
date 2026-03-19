@@ -54,6 +54,7 @@ let globalSeed = Math.floor(Math.random() * 1000000);
 // --- Hack / ZEN system ---
 let equippedHack = 'overload';
 let perfectStreak = 0;
+let zenNoteIndex  = 0;  // counts up each ZEN hit for rising scale
 let isZenMode = false;
 let hackFiredThisZen = false; // prevent double-fire
 
@@ -169,54 +170,131 @@ function initAudio() {
   if (audioCtx.state === 'suspended') audioCtx.resume();
 }
 
-function playTone(freq, type, duration, vol = 0.1) {
+// Core tone builder with pitch glide support
+function playTone(freq, type, duration, vol = 0.1, endFreq = null) {
   if (!audioCtx) return;
-  const osc = audioCtx.createOscillator();
+  const osc  = audioCtx.createOscillator();
   const gain = audioCtx.createGain();
   osc.type = type;
   osc.frequency.setValueAtTime(freq, audioCtx.currentTime);
+  if (endFreq) osc.frequency.linearRampToValueAtTime(endFreq, audioCtx.currentTime + duration);
   gain.gain.setValueAtTime(vol, audioCtx.currentTime);
-  gain.gain.exponentialRampToValueAtTime(0.01, audioCtx.currentTime + duration);
+  gain.gain.exponentialRampToValueAtTime(0.001, audioCtx.currentTime + duration);
   osc.connect(gain);
   gain.connect(audioCtx.destination);
   osc.start();
-  osc.stop(audioCtx.currentTime + duration);
+  osc.stop(audioCtx.currentTime + duration + 0.01);
 }
 
-function playLockOn() { playTone(800, 'sine', 0.1, 0.05); }
-function playFire() { playTone(200, 'square', 0.2, 0.2); playTone(150, 'sawtooth', 0.3, 0.2); }
-function playSuccess() {
-  if (isZenMode) {
-    let baseFreq = 800 + Math.min(streak * 30, 1500);
-    playTone(baseFreq, 'sine', 0.1, 0.15);
-    setTimeout(() => playTone(baseFreq * 1.25, 'sine', 0.3, 0.15), 50);
+// Low-pass filtered noise for impact sounds
+function playNoise(duration, vol = 0.05, cutoff = 400) {
+  if (!audioCtx) return;
+  const bufLen = audioCtx.sampleRate * duration;
+  const buf    = audioCtx.createBuffer(1, bufLen, audioCtx.sampleRate);
+  const data   = buf.getChannelData(0);
+  for (let i = 0; i < bufLen; i++) data[i] = Math.random() * 2 - 1;
+  const src    = audioCtx.createBufferSource();
+  const filter = audioCtx.createBiquadFilter();
+  const gain   = audioCtx.createGain();
+  src.buffer   = buf;
+  filter.type  = 'lowpass';
+  filter.frequency.value = cutoff;
+  gain.gain.setValueAtTime(vol, audioCtx.currentTime);
+  gain.gain.exponentialRampToValueAtTime(0.001, audioCtx.currentTime + duration);
+  src.connect(filter); filter.connect(gain); gain.connect(audioCtx.destination);
+  src.start(); src.stop(audioCtx.currentTime + duration + 0.01);
+}
+
+// --- TARGETING SOUNDS ---
+function playLockOn() {
+  playTone(440, 'sine', 0.08, 0.04);
+  setTimeout(() => playTone(660, 'sine', 0.06, 0.04), 70);
+}
+
+// Fire prompt (the "NOW!" flash)
+function playFire() {
+  playNoise(0.04, 0.08, 800);
+  playTone(180, 'square', 0.08, 0.12, 120);
+}
+
+// --- PERFECT HIT SOUNDS (the most important) ---
+function playPerfectHit(streakCount, inZen) {
+  if (!audioCtx) return;
+  // Rising base pitch with streak multiplier
+  const base = 660 + Math.min(streakCount * 25, 600);
+
+  if (inZen) {
+    // ZEN: rising pentatonic scale — each hit plays the next note up
+    // C  D  E  G  A  C  D  E  G  A  C  ...   (looping)
+    const ZEN_SCALE = [523, 587, 659, 784, 880, 1047, 1175, 1319, 1568, 1760, 2093];
+    const noteIdx = zenNoteIndex % ZEN_SCALE.length;
+    const note    = ZEN_SCALE[noteIdx];
+    const noteUp  = ZEN_SCALE[Math.min(noteIdx + 1, ZEN_SCALE.length - 1)];
+
+    // Root note (strong)
+    playTone(note,       'sine', 0.30, 0.22);
+    // Perfect 5th harmony (lighter, sustains longer)
+    playTone(note * 1.5, 'sine', 0.20, 0.16);
+    // Brief shimmer at next scale note
+    setTimeout(() => playTone(noteUp, 'sine', 0.18, 0.14), 55);
+    // Sparkle noise
+    setTimeout(() => playNoise(0.06, 0.04, 2200), 15);
   } else {
-    playTone(600, 'sine', 0.1, 0.1);
-    setTimeout(() => playTone(800, 'sine', 0.3, 0.1), 100);
+    // PERFECT: crisp ping with shimmer
+    playTone(base,        'sine', 0.18, 0.18);
+    playTone(base * 1.5,  'sine', 0.12, 0.10);
+    setTimeout(() => playTone(base * 2.0, 'sine', 0.10, 0.07), 60);
+    playNoise(0.03, 0.035, 3000);
   }
 }
-function playFail() { playTone(100, 'sawtooth', 0.5, 0.2); }
-function playHackLaunch() {
-  playTone(1200, 'square', 0.1, 0.15);
-  setTimeout(() => playTone(900, 'sawtooth', 0.3, 0.2), 80);
-  setTimeout(() => playTone(600, 'square', 0.4, 0.25), 180);
+
+// Regular (non-perfect) hit — quieter, no shimmer
+function playSuccess() {
+  if (!audioCtx) return;
+  playTone(520, 'sine', 0.12, 0.10);
+  setTimeout(() => playTone(660, 'sine', 0.10, 0.08), 80);
 }
-function playIntrusion() {
-  playTone(300, 'sawtooth', 0.2, 0.3);
-  setTimeout(() => playTone(250, 'square', 0.3, 0.3), 150);
+
+// --- FAIL ---
+function playFail() {
+  playTone(120, 'sawtooth', 0.35, 0.18, 80);
+  playNoise(0.15, 0.06, 250);
 }
-function playFirewall() {
-  playTone(1000, 'sine', 0.05, 0.2);
-  setTimeout(() => playTone(1500, 'sine', 0.1, 0.15), 100);
-}
+
+// --- ONLINE ROUND SOUNDS ---
 function playRoundWin() {
-  playTone(600, 'sine', 0.1, 0.15);
-  setTimeout(() => playTone(800, 'sine', 0.15, 0.15), 120);
-  setTimeout(() => playTone(1000, 'sine', 0.2, 0.3), 250);
+  // Ascending arpeggio — victory feel
+  const notes = [523, 659, 784, 1047]; // C E G C
+  notes.forEach((n, i) => setTimeout(() => playTone(n, 'sine', 0.25, 0.18), i * 100));
+  setTimeout(() => playNoise(0.08, 0.03, 1500), 380);
 }
 function playRoundLose() {
-  playTone(200, 'sawtooth', 0.3, 0.4);
-  setTimeout(() => playTone(150, 'sawtooth', 0.4, 0.4), 300);
+  // Descending minor fall
+  playTone(300, 'sawtooth', 0.28, 0.18, 180);
+  setTimeout(() => playTone(200, 'sine', 0.5, 0.15, 120), 180);
+  playNoise(0.12, 0.05, 200);
+}
+
+// --- HACK SOUNDS ---
+function playHackLaunch() {
+  // Rising data-burst whoosh
+  playTone(400, 'square', 0.05, 0.12, 1600);
+  setTimeout(() => playTone(800, 'sawtooth', 0.12, 0.18, 200), 60);
+  setTimeout(() => playNoise(0.08, 0.06, 2000), 80);
+}
+function playIntrusion() {
+  // Glitchy alarm — attention-grabbing but not ear-splitting
+  playTone(280, 'square', 0.12, 0.20);
+  setTimeout(() => playTone(350, 'square', 0.10, 0.18), 100);
+  setTimeout(() => playTone(280, 'square', 0.10, 0.16), 200);
+  playNoise(0.08, 0.04, 400);
+}
+function playFirewall() {
+  // Shield ping — satisfying block sound
+  playTone(1200, 'sine', 0.08, 0.18);
+  setTimeout(() => playTone(900,  'sine', 0.10, 0.14), 80);
+  setTimeout(() => playTone(1500, 'sine', 0.06, 0.12), 160);
+  playNoise(0.05, 0.04, 1800);
 }
 
 // =============================================
@@ -731,9 +809,9 @@ function syncInterHackOptions() {
 function updateZenPips(count, fired) {
   if (!UI.zenPips) return;
   UI.zenPips.innerHTML = '';
-  for (let i = 0; i < 5; i++) {
+  for (let i = 0; i < 3; i++) {
     const pip = document.createElement('div');
-    if (fired && i === 4) {
+    if (fired && i === 2) {
       pip.className = 'zen-pip fired';
     } else {
       pip.className = 'zen-pip' + (i < count ? ' charged' : '');
@@ -817,6 +895,7 @@ function resetRoundState() {
 
   isZenMode     = false;
   perfectStreak = 0;
+  zenNoteIndex  = 0;
   hackFiredThisZen  = false;
   parryWindowActive = false;
   pendingParryHackType = null;
@@ -974,6 +1053,61 @@ function startWaitPhase() {
   waitTimeout = setTimeout(() => { firePhase(); }, delay);
 }
 
+// Radial burst of particles on PERFECT hit
+function spawnPerfectBurst(e, isZen) {
+  if (!e) return;
+  let cx = window.innerWidth / 2;
+  let cy = window.innerHeight / 2;
+  if (e.clientX !== undefined) { cx = e.clientX; cy = e.clientY; }
+  else if (e.touches && e.touches.length > 0) { cx = e.touches[0].clientX; cy = e.touches[0].clientY; }
+
+  const count  = isZen ? 16 : 8;
+  const color  = isZen ? '#ffd700' : '#ff00ff';
+  const color2 = isZen ? '#fff'    : '#c084fc';
+
+  for (let i = 0; i < count; i++) {
+    const el   = document.createElement('div');
+    const angle = (i / count) * Math.PI * 2;
+    const dist  = isZen ? (80 + Math.random() * 60) : (50 + Math.random() * 40);
+    const dx    = Math.cos(angle) * dist;
+    const dy    = Math.sin(angle) * dist;
+    const sz    = isZen ? (4 + Math.random() * 4) : (3 + Math.random() * 3);
+    const clr   = Math.random() > 0.5 ? color : color2;
+
+    el.style.cssText = `
+      position:fixed; pointer-events:none; z-index:999;
+      width:${sz}px; height:${sz}px; border-radius:50%;
+      background:${clr}; box-shadow: 0 0 ${sz * 2}px ${clr};
+      left:${cx}px; top:${cy}px;
+      transform:translate(-50%,-50%);
+      transition: transform 0.5s cubic-bezier(.2,.8,.4,1), opacity 0.5s ease-out;
+    `;
+    document.body.appendChild(el);
+    // Force reflow then animate outward
+    void el.offsetWidth;
+    el.style.transform = `translate(calc(-50% + ${dx}px), calc(-50% + ${dy}px))`;
+    el.style.opacity   = '0';
+    setTimeout(() => el.remove(), 520);
+  }
+
+  // Brief glow on the game area
+  if (isZen) {
+    document.body.classList.add('zen-burst');
+    setTimeout(() => document.body.classList.remove('zen-burst'), 350);
+  } else {
+    document.body.classList.add('perfect-burst');
+    setTimeout(() => document.body.classList.remove('perfect-burst'), 200);
+  }
+
+  // Ring ripple on the actual target
+  const tgt = document.getElementById('main-target');
+  if (tgt) {
+    const ringClass = isZen ? 'zen-perfect' : 'perfect';
+    tgt.classList.add(ringClass);
+    setTimeout(() => tgt.classList.remove(ringClass), 400);
+  }
+}
+
 function spawnFloatingText(e, text, color) {
   if (!e) return;
   const el = document.createElement('div');
@@ -1092,6 +1226,7 @@ function firePhase() {
 // =============================================
 function activateZenMode() {
   isZenMode = true;
+  zenNoteIndex = 0;   // start scale from bottom
   document.body.classList.add('zen-mode');
   flashScreen('white');
   document.body.classList.add('screen-shake');
@@ -1112,7 +1247,7 @@ function activateZenMode() {
 }
 
 function grantScore(e, elapsed, basePoints, typeText) {
-  let isPerfect = elapsed < 200;
+  let isPerfect = elapsed < 300;
 
   if (isPerfect) {
     // Firewall check: first PERFECT after receiving a hack = parry
@@ -1121,14 +1256,16 @@ function grantScore(e, elapsed, basePoints, typeText) {
     }
 
     perfectStreak++;
+    if (isZenMode) zenNoteIndex++;   // rises with each ZEN PERFECT
     if (isOnline) updateZenPips(perfectStreak);
-    if (perfectStreak >= 5 && !isZenMode) activateZenMode();
+    if (perfectStreak >= 3 && !isZenMode) activateZenMode();
   } else {
     perfectStreak = 0;
     if (isOnline) updateZenPips(0);
     if (isZenMode) {
       isZenMode = false;
       hackFiredThisZen = false;
+      zenNoteIndex = 0;
       document.body.classList.remove('zen-mode');
       spawnFloatingText(e, 'ZONE LOST', 'var(--text-muted)');
     }
@@ -1139,9 +1276,19 @@ function grantScore(e, elapsed, basePoints, typeText) {
   let pts = Math.floor(basePoints * pMult);
   score += pts;
 
+  // Audio: different sounds for ZEN vs PERFECT vs normal
+  if (isPerfect) {
+    playPerfectHit(streak, isZenMode);
+  } else {
+    playSuccess();
+  }
+
   let tColor = isZenMode ? '#ffd700' : (isPerfect ? '#ff00ff' : 'var(--green)');
   let pre    = isZenMode ? 'ZEN x5.0! ' : (isPerfect ? `PERFECT x${pMult}! ` : (pMult > 1.0 ? `x${pMult} ` : ''));
   spawnFloatingText(e, `${pre}${typeText} +${pts}`, tColor);
+
+  // Visual effect: PERFECT burst
+  if (isPerfect) spawnPerfectBurst(e, isZenMode);
 }
 
 // =============================================
@@ -1164,7 +1311,6 @@ function successGame() {
   void streakEl.offsetWidth;
   streakEl.classList.add('score-pulse');
 
-  playSuccess();
   streak++;
   if (streak % 1 === 0) currentLevelIdx++;
   updateFirebaseState(true);
