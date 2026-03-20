@@ -1,6 +1,6 @@
 import { initializeApp } from "https://www.gstatic.com/firebasejs/12.10.0/firebase-app.js";
 import { getAuth, signInAnonymously } from "https://www.gstatic.com/firebasejs/12.10.0/firebase-auth.js";
-import { getDatabase, ref, set, get, update, remove, onValue, serverTimestamp, push, onChildAdded, off, increment } from "https://www.gstatic.com/firebasejs/12.10.0/firebase-database.js";
+import { getDatabase, ref, set, get, update, remove, onValue, serverTimestamp, push, onChildAdded, off, increment, onDisconnect } from "https://www.gstatic.com/firebasejs/12.10.0/firebase-database.js";
 
 const firebaseConfig = {
   apiKey: "AIzaSyBHXbceS4jq3XvnBHZL7VakG5C_-8lzpAo",
@@ -368,6 +368,8 @@ async function createRoom() {
 
   myPlayerRef = ref(db, 'rooms/' + roomCode + '/players/' + authUser.uid);
   await set(myPlayerRef, { ready: false, streak: 0, alive: true, roundsWon: 0, attackCount: 0 });
+  // Remove player on disconnect
+  onDisconnect(myPlayerRef).remove();
 
   state = 'LOBBY';
   if (roomRef) off(roomRef);
@@ -403,6 +405,9 @@ async function joinRoom(code) {
 
   myPlayerRef = ref(db, 'rooms/' + roomCode + '/players/' + authUser.uid);
   await set(myPlayerRef, { ready: false, streak: 0, alive: true, roundsWon: 0, attackCount: 0 });
+  // Remove player on disconnect
+  onDisconnect(myPlayerRef).remove();
+
 
   state = 'LOBBY';
   if (roomRef) off(roomRef);
@@ -424,6 +429,11 @@ function setupRoomListeners() {
   onValue(roomRef, snap => {
     const data = snap.val();
     if (!data) return;
+
+    // Sync seed for fair target placement
+    if (data.seed !== undefined) {
+      globalSeed = data.seed;
+    }
 
     if (data.players) {
       const players = Object.keys(data.players);
@@ -1632,9 +1642,16 @@ function startCountdown(endTime) {
   Lobby.countdown.innerText = '3'; // initial fallback
 
   state = 'COUNTDOWN';
+  const startTime = getServerTime();
+  const initialLeft = Math.ceil((endTime - startTime) / 1000);
+  
   const iv = setInterval(() => {
-    const left = Math.ceil((endTime - getServerTime()) / 1000);
-    if (left > 0) {
+    const now = getServerTime();
+    const left = Math.ceil((endTime - now) / 1000);
+    
+    // Fallback: If time sync is wildly off or stuck, ensure we eventually start
+    const elapsedLocal = (getServerTime() - startTime);
+    if (left > 0 && elapsedLocal < 10000) { 
       Lobby.countdown.innerText = left;
     } else {
       clearInterval(iv);
