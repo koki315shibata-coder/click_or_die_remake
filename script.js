@@ -25,7 +25,7 @@ let isHost = false;
 let myPlayerRef = null;
 let roomRef = null;
 
-let state = 'START'; // START, COUNTDOWN, WAIT, FIRE, RESULT
+let state = 'LOBBY'; // LOBBY, START, COUNTDOWN, WAIT, FIRE, RESULT
 let currentLevelIdx = 0;
 let streak = 0;
 let score = 0;
@@ -369,7 +369,7 @@ async function createRoom() {
   myPlayerRef = ref(db, 'rooms/' + roomCode + '/players/' + authUser.uid);
   await set(myPlayerRef, { ready: false, streak: 0, alive: true, roundsWon: 0, attackCount: 0 });
 
-  state = 'START';
+  state = 'LOBBY';
   setupRoomListeners();
   showLobbyInfo();
 }
@@ -403,7 +403,7 @@ async function joinRoom(code) {
   myPlayerRef = ref(db, 'rooms/' + roomCode + '/players/' + authUser.uid);
   await set(myPlayerRef, { ready: false, streak: 0, alive: true, roundsWon: 0, attackCount: 0 });
 
-  state = 'START';
+  state = 'LOBBY';
   setupRoomListeners();
   showLobbyInfo();
 }
@@ -503,10 +503,9 @@ function setupRoomListeners() {
     // --- Game start detection ---
     const playerCount = data.players ? Object.keys(data.players).length : 0;
     const isStarting = data.state === 'starting' && playerCount >= 2 && !!data.countdownEnd;
-    const safeToStart = state === 'START';
-    if (isStarting && safeToStart) {
-      Lobby.hostMessage.classList.add('hidden');
-      Lobby.btnStart.classList.add('hidden');
+    
+    // Only call startCountdown if we are truly in the lobby state
+    if (isStarting && (state === 'START' || state === 'LOBBY')) {
       if (Lobby.countdown.classList.contains('hidden')) {
         startCountdown(data.countdownEnd);
       }
@@ -988,7 +987,7 @@ function resetScores() {
 
 function resetGameState() {
   clearAllTimers();
-  activeTarget.resolved = true;
+  if (activeTarget) activeTarget.resolved = true;
   currentLevelIdx = 0; // always reset to level 1 on death
   wipeTargets();
 }
@@ -1011,6 +1010,15 @@ function startGame() {
   clearAllTimers();
   resetUI();
   wipeTargets();
+  
+  // Set state immediately to prevent racing listeners from interrupting
+  if (isOnline && streak === 0) {
+    state = 'START';
+  } else if (streak === 0) {
+    state = 'COUNTDOWN';
+  } else {
+    state = 'WAIT';
+  }
 
   updateFirebaseState(true);
 
@@ -1453,6 +1461,7 @@ function onlineFail(reason) {
 
   // Trigger local round loss immediately for instant feedback
   handleRoundResult({
+    round: currentOnlineRound,
     loser: authUser.uid,
     reason: reason,
     nextRoundAt: nextAt
@@ -1589,6 +1598,7 @@ function startCountdown(endTime) {
   Lobby.countdown.classList.remove('hidden');
   Lobby.countdown.innerText = '3'; // initial fallback
 
+  state = 'COUNTDOWN';
   const iv = setInterval(() => {
     const left = Math.ceil((endTime - getServerTime()) / 1000);
     if (left > 0) {
@@ -1782,7 +1792,7 @@ function returnToLobby() {
 
   showLobbyInfo();
   showScreen('screen-lobby');
-  state = 'START';
+  state = 'LOBBY';
   resetGameState();
 }
 
