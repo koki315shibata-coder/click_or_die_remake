@@ -944,9 +944,7 @@ function resetRoundState() {
   hackFiredThisZen  = false;
   parryWindowActive = false;
   pendingParryHackType = null;
-  lastHackId    = null; // allow fresh hack in next round
   roundResultHandled = false;
-  myProcessedAttackCount = 0; // reset attack processing for new round
 
   // Consume pending hacks (they were set last round, consume now)
   if (pendingMimic)    document.body.classList.add('mimic-mode');
@@ -965,6 +963,13 @@ function resetMatchState() {
   roundResultHandled = false;
   resetRoundScores();
   updateRoundPips();
+
+  // Reset pending hacks on fresh match start
+  pendingMimic = false;
+  pendingTimeshift = false;
+  pendingOverload = 0;
+  lastHackId = null;
+  myProcessedAttackCount = 0;
 }
 
 function resetRoundScores() {
@@ -1013,11 +1018,6 @@ function startGame() {
   clearAllTimers();
   resetUI();
   wipeTargets();
-
-  // Reset pending hacks on fresh match start
-  pendingMimic = false;
-  pendingTimeshift = false;
-  pendingOverload = 0;
 
   updateFirebaseState(true);
 
@@ -1187,16 +1187,17 @@ function spawnFloatingText(e, text, color) {
 function getRandomPos(level, existingPositions = []) {
   const tSize = 80;  // target visual radius
   // Safe play area: leave room for header (~110px) and footer (~140px), side padding 30px
-  const safeTop    = 110;
-  const safeBottom = 140;
-  const safeSide   = 30;
+  const isMobile = window.innerWidth <= 768;
+  const safeTop    = isMobile ? 80 : 110;
+  const safeBottom = isMobile ? 100 : 140;
+  const safeSide   = isMobile ? 20 : 30;
   const areaW = window.innerWidth  - safeSide * 2;
   const areaH = window.innerHeight - safeTop - safeBottom;
   const spreadX = Math.max(60, (areaW  - tSize) / 2);
   const spreadY = Math.max(60, (areaH  - tSize) / 2);
 
   // Adaptive minimum distance: smaller on narrow screens so placement is always possible
-  const rawMinDist = 120;
+  const rawMinDist = isMobile ? 90 : 120;
   // Max distance that can fit given the spread (need at least 2 non-overlapping slots)
   const maxPossible = Math.min(spreadX, spreadY) * 1.2;
   const minDist = Math.min(rawMinDist, maxPossible * 0.7);
@@ -1656,8 +1657,11 @@ function handleBackgroundClick(e) {
 
   // INTER_ROUND: 5-second break, block ALL clicks
   if (state === 'INTER_ROUND') return;
-  // MATCH_OVER: only the explicit button should work, not background
-  if (state === 'MATCH_OVER') return;
+  // MATCH_OVER: allowed to return to lobby via background click
+  if (state === 'MATCH_OVER') {
+    returnToLobby();
+    return;
+  }
 
   if (state === 'START') {
     if (!isOnline) startGame();

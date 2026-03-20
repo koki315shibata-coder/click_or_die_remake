@@ -463,15 +463,28 @@ footer {
 #main-btn:hover { opacity: 0.9; }
 
 @media (max-width: 768px) {
-  .screen { padding: 25px; }
-  header { flex-direction: column; gap: 20px; }
-  .stats { width: 100%; justify-content: space-between; text-align: left; }
-  .stat { align-items: flex-start; }
-  footer { flex-direction: column; align-items: flex-start; gap: 30px; }
-  .actions { width: 100%; align-items: stretch; text-align: center; }
-  #main-btn { width: 100%; padding: 18px; }
-  #result-time { font-size: 4rem; }
-  #target { width: 140px; height: 140px; }
+  .screen { padding: 15px; }
+  header { flex-direction: row; align-items: center; justify-content: space-between; gap: 10px; }
+  header h1 { font-size: 1.5rem; }
+  .stats { width: auto; gap: 10px; }
+  .stat .label { font-size: 0.6rem; }
+  .stat .value { font-size: 1.1rem; }
+  
+  #round-scoreboard { transform: scale(0.85); order: -1; }
+  #ping-display { font-size: 0.65rem; }
+
+  footer { flex-direction: row; align-items: center; justify-content: space-between; gap: 10px; }
+  .level-info { margin-bottom: 0; }
+  #level-display { font-size: 0.9rem; }
+  #threat-display { font-size: 0.7rem; margin-bottom: 0; }
+
+  .actions { width: auto; align-items: flex-end; gap: 5px; }
+  #main-btn { width: auto; padding: 10px 25px; font-size: 1rem; }
+  #status-panel { font-size: 0.75rem; }
+
+  #result-time { font-size: 3.5rem; }
+  #target-wrapper { width: 80px; height: 80px; }
+  .fake-target { width: 80px; height: 80px; }
 }
 
 /* GAMEPLAY FEEDBACK AND NEW MECHANICS */
