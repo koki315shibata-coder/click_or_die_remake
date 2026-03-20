@@ -370,6 +370,7 @@ async function createRoom() {
   await set(myPlayerRef, { ready: false, streak: 0, alive: true, roundsWon: 0, attackCount: 0 });
 
   state = 'LOBBY';
+  if (roomRef) off(roomRef);
   setupRoomListeners();
   showLobbyInfo();
 }
@@ -404,6 +405,7 @@ async function joinRoom(code) {
   await set(myPlayerRef, { ready: false, streak: 0, alive: true, roundsWon: 0, attackCount: 0 });
 
   state = 'LOBBY';
+  if (roomRef) off(roomRef);
   setupRoomListeners();
   showLobbyInfo();
 }
@@ -504,8 +506,9 @@ function setupRoomListeners() {
     const playerCount = data.players ? Object.keys(data.players).length : 0;
     const isStarting = (data.state === 'starting' || data.state === 'playing') && playerCount >= 2;
     
-    // Only call startCountdown if we are truly in the lobby state
-    if (isStarting && (state === 'START' || state === 'LOBBY')) {
+    // Only call startCountdown if we are truly in the lobby state.
+    // Once state changes to COUNTDOWN or START, we ignore further lobby start updates.
+    if (isStarting && state === 'LOBBY') {
       if (Lobby.countdown.classList.contains('hidden')) {
         // If it's already 'playing', skip the 3s countdown or start a short one
         const cTime = data.countdownEnd || (getServerTime() + 1000);
@@ -1644,6 +1647,10 @@ function enterGameMode(online) {
     UI.btnQuit.classList.remove('hidden');
     UI.mainBtn.classList.add('hidden');
     UI.mainBtn.style.opacity = '0';
+    
+    // Ensure lobby countdown is cleared from view
+    Lobby.countdown.classList.add('hidden');
+    Lobby.countdown.innerText = '';
 
     resetMatchState();
     updateRoundBadge();   // show "online · round 1 of 5" from the start
