@@ -497,8 +497,11 @@ function setupRoomListeners() {
       }
     }
 
-    // --- Round result detection (single source of truth for round outcomes) ---
-    if (data.roundResult && data.roundResult.round === currentOnlineRound && !roundResultHandled) {
+    // --- Round result detection ---
+    const inGame = (state === 'START' || state === 'WAIT' || state === 'FIRE' || state === 'RESULT');
+    const isOurMatch = data.roundResult && data.matchId && data.roundResult.matchId === data.matchId;
+    
+    if (inGame && isOurMatch && data.roundResult.round === currentOnlineRound && !roundResultHandled) {
       handleRoundResult(data.roundResult);
     }
 
@@ -1469,13 +1472,20 @@ function onlineFail(reason) {
   // Finalize timing and write to Firebase
   const nextAt = getServerTime() + 5500;
   if (roomRef && authUser) {
-    update(roomRef, {
-      roundResult: {
-        round: currentOnlineRound,
-        loser: authUser.uid,
-        reason,
-        nextRoundAt: nextAt
-      }
+    // Read the matchId from the current room state if possible, or fallback
+    get(roomRef).then(snap => {
+      const data = snap.val();
+      const mid = (data && data.matchId) ? data.matchId : 0;
+      
+      update(roomRef, {
+        roundResult: {
+          round: currentOnlineRound,
+          matchId: mid, 
+          loser: authUser.uid,
+          reason: reason,
+          nextRoundAt: nextAt
+        }
+      });
     });
   }
 
@@ -1612,6 +1622,9 @@ function updateSelectorUI() {
 // COUNTDOWN & ENTER GAME
 // =============================================
 function startCountdown(endTime) {
+  // If we're already in a countdown or game, don't start another one
+  if (state !== 'LOBBY') return;
+  
   Lobby.btnReady.classList.add('hidden');
   Lobby.btnStart.classList.add('hidden');
   Lobby.hostMessage.classList.add('hidden');
@@ -1906,6 +1919,7 @@ Lobby.btnStart.addEventListener('click', async () => {
     try {
       await update(roomRef, {
         state: 'starting',
+        matchId: Date.now(), // Unique ID for this specific match session
         gameStarted: true,
         startedAt: getServerTime(), // SYNCED
         countdownEnd: getServerTime() + 3000, // SYNCED
