@@ -763,22 +763,16 @@ function startNextRound() {
   roundResultHandled = false;
 
   // Apply pending hack from previous round, then clear everything
-  const applyMimic = pendingMimic;
-  resetRoundState();
+  resetRoundState(); // this now also clears transient body classes
   streak = 0;
   score = 0;
   perfectStreak = 0;
   currentLevelIdx = 0;
 
-  // Host clears roundResult AND hack data to prevent stale re-triggering
-  if (isHost && roomRef) {
-    update(roomRef, {
-      roundResult: null,
-      hackTarget: null,
-      hackType: null,
-      hackId: null
-    });
-  }
+  // Host DO NOT clear roundResult here. If we clear it here, the guest might miss the
+  // final state update before we move to the next round if they have a slow connection.
+  // Instead, the host clears it when the NEXT round starts OR in onlineFail.
+  // Actually, we clear it in handleRoundWin/Loss for the NEXT round (implicit in setting new result).
 
   // Also reset parry window (can't parry between rounds)
   parryWindowActive = false;
@@ -787,8 +781,6 @@ function startNextRound() {
   updateSidebar();
   updateRoundBadge();
   if (isOnline) updateZenPips(0);
-
-  if (applyMimic) document.body.classList.add('mimic-mode');
 
   startGame();
 }
@@ -912,6 +904,7 @@ function getLevelParams(idx) {
 function resetUI() {
   UI.gameOverScreen.classList.add('hidden');
   UI.resultDisplay.classList.add('hidden');
+  if (UI.interRoundOverlay) UI.interRoundOverlay.classList.add('hidden');
   document.body.classList.remove('screen-shake');
   UI.flashOverlay.className = '';
   void UI.flashOverlay.offsetWidth;
@@ -1759,17 +1752,16 @@ function returnToLobby() {
   matchOver = false;
   currentOnlineRound = 1;
   roundResultHandled = false;
-  resetRoundState();
-  resetRoundScores();
+  resetMatchState(); // Comprehensive reset
   
   if (UI.interRoundOverlay) UI.interRoundOverlay.classList.add('hidden');
   if (UI.flashOverlay) UI.flashOverlay.className = '';
 
   if (myPlayerRef) {
-    update(myPlayerRef, { ready: false, alive: true, streak: 0, roundsWon: 0, attackCount: 0 });
+    // Also reset attack counts to ensure no stale hacks apply to next player in this slot
+    update(myPlayerRef, { ready: false, alive: true, streak: 0, roundsWon: 0, attackCount: 0, lastAttackType: null, lastAttackId: null });
   }
   
-  state = 'START';
   if (roomRef) {
     if (isHost) {
       update(roomRef, { 
@@ -1777,16 +1769,17 @@ function returnToLobby() {
         gameStarted: false,
         countdownEnd: null,
         roundResult: null,
-        currentRound: null,
+        pingRequest: null,
+        pingResponse: null,
         hackTarget: null, 
         hackType: null, 
         hackId: null 
       });
     } else {
-      // Guest: If host already left or hasn't reset it yet, ensure we don't hold the lock
       update(roomRef, { gameStarted: false });
     }
   }
+
   showLobbyInfo();
   showScreen('screen-lobby');
   state = 'START';
@@ -1881,7 +1874,8 @@ Lobby.btnStart.addEventListener('click', async () => {
         state: 'starting',
         gameStarted: true,
         startedAt: getServerTime(), // SYNCED
-        countdownEnd: getServerTime() + 3000 // SYNCED
+        countdownEnd: getServerTime() + 3000, // SYNCED
+        roundResult: null // CLEAR ANY STALE DATA
       });
     } catch (e) {
       console.error('[Lobby] Firebase Error on Start Game:', e);

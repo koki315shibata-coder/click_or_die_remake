@@ -463,28 +463,39 @@ footer {
 #main-btn:hover { opacity: 0.9; }
 
 @media (max-width: 768px) {
-  .screen { padding: 15px; }
-  header { flex-direction: row; align-items: center; justify-content: space-between; gap: 10px; }
-  header h1 { font-size: 1.5rem; }
-  .stats { width: auto; gap: 10px; }
-  .stat .label { font-size: 0.6rem; }
-  .stat .value { font-size: 1.1rem; }
+  .screen { padding: 10px; }
+  header { flex-direction: row; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 5px; }
+  header h1 { font-size: 1.2rem; }
+  .brand .subtitle { font-size: 0.7rem; }
   
-  #round-scoreboard { transform: scale(0.85); order: -1; }
-  #ping-display { font-size: 0.65rem; }
+  .stats { width: auto; gap: 8px; }
+  .stat .label { font-size: 0.55rem; letter-spacing: 0; }
+  .stat .value { font-size: 1rem; }
+  
+  #round-scoreboard { transform: scale(0.8); order: -1; margin-right: -5px; }
+  #zen-charge-display { transform: scale(0.85); margin-right: -5px; }
+  #ping-display { font-size: 0.6rem; position: absolute; top: 100%; right: 0; }
 
-  footer { flex-direction: row; align-items: center; justify-content: space-between; gap: 10px; }
-  .level-info { margin-bottom: 0; }
-  #level-display { font-size: 0.9rem; }
-  #threat-display { font-size: 0.7rem; margin-bottom: 0; }
+  main { padding: 10px 0; }
+  #target-wrapper { width: 90px; height: 90px; } /* Slightly larger for easier touch */
+  .fake-target { width: 90px; height: 90px; }
 
-  .actions { width: auto; align-items: flex-end; gap: 5px; }
-  #main-btn { width: auto; padding: 10px 25px; font-size: 1rem; }
-  #status-panel { font-size: 0.75rem; }
+  footer { flex-direction: row; align-items: center; justify-content: space-between; gap: 8px; margin-top: 5px; }
+  .level-info { margin-bottom: 0; flex: 1; }
+  #level-display { font-size: 0.8rem; }
+  #threat-display { font-size: 0.65rem; margin-bottom: 0; }
 
-  #result-time { font-size: 3.5rem; }
-  #target-wrapper { width: 80px; height: 80px; }
-  .fake-target { width: 80px; height: 80px; }
+  .actions { width: auto; align-items: flex-end; gap: 4px; }
+  #main-btn { width: auto; padding: 8px 20px; font-size: 0.9rem; }
+  #status-panel { font-size: 0.7rem; }
+
+  #result-time { font-size: 3rem; }
+  #inter-round-content { gap: 15px; }
+  #inter-round-result { font-size: 2rem; }
+  #inter-round-score { font-size: 0.9rem; }
+  #inter-loadout-selector { padding: 10px; }
+  .inter-loadout-label { font-size: 0.7rem; margin-bottom: 8px; }
+  #inter-round-timer { font-size: 3rem; }
 }
 
 /* GAMEPLAY FEEDBACK AND NEW MECHANICS */
