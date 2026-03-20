@@ -502,12 +502,14 @@ function setupRoomListeners() {
 
     // --- Game start detection ---
     const playerCount = data.players ? Object.keys(data.players).length : 0;
-    const isStarting = data.state === 'starting' && playerCount >= 2 && !!data.countdownEnd;
+    const isStarting = (data.state === 'starting' || data.state === 'playing') && playerCount >= 2;
     
     // Only call startCountdown if we are truly in the lobby state
     if (isStarting && (state === 'START' || state === 'LOBBY')) {
       if (Lobby.countdown.classList.contains('hidden')) {
-        startCountdown(data.countdownEnd);
+        // If it's already 'playing', skip the 3s countdown or start a short one
+        const cTime = data.countdownEnd || (getServerTime() + 1000);
+        startCountdown(cTime);
       }
     }
 
@@ -1023,7 +1025,10 @@ function startGame() {
   updateFirebaseState(true);
 
   if (isOnline && isHost && roomRef) {
-    update(roomRef, { state: 'playing' });
+    // Small buffer delay to allow guest to catch 'starting' or 'playing' update
+    setTimeout(() => {
+      if (roomRef) update(roomRef, { state: 'playing' });
+    }, 500);
   }
 
   if (streak === 0 && !isOnline) {
@@ -1102,9 +1107,21 @@ function startWaitPhase() {
 
   checkSuddenDeath();
 
-  const delay = Math.random() * 300 + 200;
-  targetFireTime = performance.now() + delay;
-  waitTimeout = setTimeout(() => { firePhase(); }, delay);
+  try {
+    const delay = Math.random() * 300 + 200;
+    targetFireTime = performance.now() + delay;
+    waitTimeout = setTimeout(() => { 
+      try {
+        firePhase(); 
+      } catch (e) {
+        console.error('[Flow] Error in firePhase:', e);
+        if (isOnline) onlineFail('system error.');
+      }
+    }, delay);
+  } catch (e) {
+    console.error('[Flow] Error in startWaitPhase:', e);
+    if (isOnline) onlineFail('initialization error.');
+  }
 }
 
 // Radial burst of particles on PERFECT hit
