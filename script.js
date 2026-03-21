@@ -430,8 +430,8 @@ function setupRoomListeners() {
     const data = snap.val();
     if (!data) return;
 
-    // Sync seed for fair target placement
-    if (data.seed !== undefined) {
+    // Sync seed ONLY once when match hasn't started yet or a new seed is provided
+    if (data.seed !== undefined && state === 'LOBBY') {
       globalSeed = data.seed;
     }
 
@@ -1043,7 +1043,7 @@ function startGame() {
   if (isOnline && isHost && roomRef) {
     // Small buffer delay to allow guest to catch 'starting' or 'playing' update
     setTimeout(() => {
-      if (roomRef) update(roomRef, { state: 'playing' });
+      if (roomRef) update(roomRef, { state: 'playing', roundResult: null });
     }, 500);
   }
 
@@ -1095,7 +1095,10 @@ function startWaitPhase() {
   const tw = document.getElementById('target-wrapper');
   let activePositions = [];
 
-  if (currentLevelIdx >= 1) {
+  // Online: targets move from Level 1. Offline: targets move from Level 2.
+  const shouldMove = (currentLevelIdx >= 1) || isOnline;
+
+  if (shouldMove) {
     const p1 = getRandomPos(currentLevelIdx, activePositions);
     activePositions.push(p1);
     tw.style.transition = 'transform 0.4s ease-out';
@@ -1111,8 +1114,8 @@ function startWaitPhase() {
     pendingMimic = false;
   }
   
-  // OVERLOAD hack: add extra decoys
-  if (currentLevelIdx >= 1 || (isOnline && pendingOverload > 0)) {
+  // OVERLOAD hack: add extra decoys. Online always has at least 1 decoy from Level 1.
+  if (currentLevelIdx >= 1 || isOnline || pendingOverload > 0) {
     let decoyCount = Math.min(6, currentLevelIdx + 1);
     if (isOnline && pendingOverload > 0) {
       decoyCount += pendingOverload;
@@ -1494,7 +1497,8 @@ function onlineFail(reason) {
           loser: authUser.uid,
           reason: reason,
           nextRoundAt: nextAt
-        }
+        },
+        // Also clear any transient round state if needed
       });
     });
   }
